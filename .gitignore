@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# R
+.Rhistory
+.Rapp.history
+.RData
+.Ruserdata
+*.Rproj.user
+*.Rproj
+
+# Output files
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.svg
+Rplots.pdf
+
