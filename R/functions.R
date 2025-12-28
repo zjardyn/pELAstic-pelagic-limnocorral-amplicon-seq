@@ -1,3 +1,5 @@
+# Functions used by other scripts 
+# Libraries required, either download or use the docker container
 library(tidyverse)
 library(microViz)
 library(bubbler)
