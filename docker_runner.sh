@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Docker runner script for R analysis environment
-# This script runs the zjardyn/r-latest-ancombc Docker container
+# This script runs the zjardyn/pelagic_amplicon Docker container
 # with the project directory mounted and radian as the default shell
 
 # Set the project directory (current directory)
