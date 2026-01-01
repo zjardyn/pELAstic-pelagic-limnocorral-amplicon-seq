@@ -16,8 +16,12 @@ library(janitor)
 library(ANCOMBC)
 library(parallel)
 library(ggside)
+library(magick)
+library(ggpp)
+library(tidyr)
+library(scales)
 
-pca_plot0 <- function(phy, colour = NULL, shape = NULL, r2_cutoff = 0.02, tax_level = "Genus", transform = "clr", title = "PCA", point_size = 3, italics = TRUE) {
+pca_plot0 <- function(phy, colour = NULL, shape = NULL, r2_cutoff = 0.02, tax_level = "Genus", transform = "clr", title = "PCA", point_size = 4, italics = TRUE, tax_lab_size = 3) {
     
     colour <- enquo(colour)
     shape <- enquo(shape)
@@ -66,20 +70,30 @@ pca_plot0 <- function(phy, colour = NULL, shape = NULL, r2_cutoff = 0.02, tax_le
 
     # Select species with R² above the cutoff
     selected_spp_scores <- spp_scores %>%
-        filter(max_r2 >= r2_cutoff)
+        filter(max_r2 >= r2_cutoff) %>%
+        mutate(fontface = if_else(italics & !Species %in% c("Leptolyngbyaceae Family", "LKM11", "Glissomonadida Family"), 
+                                   "italic", "plain"))
 
     # For all PCs at once
     eig <- eigenvals(mod)
     var_explained <- (eig / sum(eig)) * 100
 
     ggplot() + 
-        geom_point(data = smp_scores, aes(x = PC1, y = PC2, color = !!colour, shape = !!shape), size = point_size) +
+        geom_point(data = smp_scores, aes(x = PC1, y = PC2, fill = !!colour, shape = !!shape), 
+                   size = point_size, alpha = 0.7, color = "black", stroke = 0.5) +
         geom_segment(data = selected_spp_scores, aes(x = 0, y = 0, xend = PC1, yend = PC2),
-                     arrow = arrow(length = unit(0.2, "cm")), alpha = 0.9) + 
-        geom_text_repel(data = selected_spp_scores, aes(x = PC1, y = PC2, label = Species),
-        size = 3,
-        alpha = 0.9, 
-        fontface = if(italics) "italic" else "plain") + 
+                     arrow = arrow(length = unit(0.2, "cm")), alpha = 0.7, colour = "#343434") + 
+        geom_text_repel(data = selected_spp_scores, aes(x = PC1, y = PC2, label = Species, fontface = fontface),
+        size = tax_lab_size,
+        alpha = 1,
+        position = position_nudge_center(0.2, 0.1, 0, 0),
+        box.padding = 1.5,
+        point.padding = 1.5,
+        min.segment.length = 0.3,
+        force = 2,
+        max.overlaps = Inf,
+        max.iter = 15000) + 
+        coord_cartesian(clip = "off") +
         labs(x = glue("PC1 [{round(var_explained[1], 1)}%]"), 
             y = glue("PC2 [{round(var_explained[2], 1)}%]")) +
         # scale_colour_viridis_d() + 
@@ -244,7 +258,7 @@ plot_stacked_barchart <- function(gene = "16S", taxa_level = "Genus", n_taxa = 2
         theme(strip.text = element_text(size = 10),
               axis.text.x = element_text(size = 10)) +
         labs(x = "Sample name", tag = tag) +
-        theme(plot.tag = element_text(face = "bold"))
+        theme(plot.tag = element_text(face = "bold", size = 28))
 
     p2 <- inner_join(rel_abund_ms, new_layer, by = "sample_id") %>%
         bar_plot(
@@ -315,16 +329,16 @@ prepare_ancombc_plot_heatmap <- function(output_data) {
 
 plastic_theme <- theme_bw(base_size = 16) +
   theme(
-    axis.text.x = element_text(size = 16),
-    axis.text.y = element_text(size = 16),
-    axis.title = element_text(size = 18),
+    axis.text.x = element_text(size = 18),
+    axis.text.y = element_text(size = 18),
+    axis.title = element_text(size = 20),
     plot.margin = margin(20, 60, 20, 20),
     panel.grid.minor = element_blank(),
     legend.position = "bottom",
     legend.title.align = 0.5,
     legend.text = element_text(size = 18),
     legend.title = element_text(size = 20),
-    plot.tag = element_text(face = "bold", size = 24)
+    plot.tag = element_text(face = "bold", size = 28)
   )
 
 plastic_theme_2 <- theme_bw(base_size = 16) +

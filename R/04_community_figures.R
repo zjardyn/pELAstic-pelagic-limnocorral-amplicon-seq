@@ -1,10 +1,7 @@
 source("R/01_load_files.R")
 source("R/functions.R")
-library(patchwork)
 
 theme_set(theme_bw(base_size = 14))
-# theme_set(theme_linedraw(base_size = 12))
-plot_stacked_barchart(gene = "16S", taxa_level = "Phylum", n_taxa = 13, italics = FALSE, tag = "A") 
 
 p1 <- plot_stacked_barchart(gene = "16S", taxa_level = "Phylum", n_taxa = 13, italics = FALSE, tag = "A") 
 p2 <- plot_stacked_barchart(gene = "18S", taxa_level = "Family", n_taxa = 13, italics = FALSE, tag = "B") 

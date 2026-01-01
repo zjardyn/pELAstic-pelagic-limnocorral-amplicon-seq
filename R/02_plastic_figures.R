@@ -1,22 +1,7 @@
 source("R/01_load_files.R")
 source("R/functions.R")
-library(magick)
 
-# # Global theme for plastic figures
-# plastic_theme <- theme_bw(base_size = 16) +
-#   theme(
-#     axis.text.x = element_text(size = 16),
-#     axis.text.y = element_text(size = 16),
-#     axis.title = element_text(size = 18),
-#     plot.margin = margin(20, 60, 20, 20),
-#     panel.grid.minor = element_blank(),
-#     legend.position = "bottom",
-#     legend.title.align = 0.5,
-#     legend.text = element_text(size = 18),
-#     legend.title = element_text(size = 20),
-#     plot.tag = element_text(face = "bold", size = 24)
-#   )
-
+# Figure 1: experimental design and limnocorral illustration
 phy_16S_9 <- phy_16S %>%
     subset_samples(Date == 9) %>%
     subset_samples(Location == "WS")
@@ -40,7 +25,7 @@ tb <-tibble(plastic_concentration = meta_data$plastic_concentration,
 p1 <- ggplot(tb, aes(x = reorder(Corral, plastic_concentration), y = plastic_concentration, fill = plastic_level)) +
   geom_point(size = 7, shape = 21, show.legend = TRUE) +
   geom_text(aes(label = plastic_concentration), vjust = -1, size = 5, fontface = "bold") +
-  scale_fill_viridis_d(name = "Plastic Level") +
+  scale_fill_viridis_d(name = "Plastic Level", labels = c("None", "Low", "Medium", "High")) +
   scale_x_discrete(expand = expansion(add = c(1, 1))) +
   scale_y_log10(
     name = "Particles/L",
@@ -54,7 +39,7 @@ p2 <- meta_data %>%
     select(particles_total_d20, CorralLetter, plastic_concentration, plastic_level) %>%
     ggplot(aes(x = reorder(CorralLetter, plastic_concentration), y = particles_total_d20, fill = plastic_level)) +
     geom_point(size = 7, shape = 21, show.legend = TRUE) +
-    scale_fill_viridis_d(name = "Plastic Level") +
+    scale_fill_viridis_d(name = "Plastic Level", labels = c("None", "Low", "Medium", "High")) +
     scale_x_discrete(expand = expansion(add = c(1, 1))) + 
     ylab(expression("Particles/cm"^2)) + 
     scale_y_continuous(limits = c(0, 30))  + 
@@ -71,7 +56,7 @@ p_img <- ggplot() +
   annotation_custom(img_grob, xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf) +
   theme_void() +
   labs(tag = "A") +
-  theme(plot.tag = element_text(face = "bold", size = 24))
+  theme(plot.tag = element_text(face = "bold", size = 28))
 
 # Combine all three plots
 p3 <- (p_img + p1 + p2 + patchwork::plot_layout(ncol = 3, guides = "collect", axes = "collect")) & 

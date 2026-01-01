@@ -1,38 +1,21 @@
 source("R/01_load_files.R")
 source("R/functions.R")
-library(tidyverse)
-library(tidyr)
-library(scales)
 
+rf_16S <-readRDS("output/rf_runs_1000_16S.rds")
+rf_18S <-readRDS("output/rf_runs_1000_18S.rds")
 
-rf_16S <-readRDS("out/rf_runs_1000_16S.rds")
-rf_18S <-readRDS("out/rf_runs_1000_18S.rds")
-
-# nrow(rf_16S)
-# nrow(rf_18S)
-
-# if the variable "total particles/m2" is used, remove NAs
 phy_16S_9_ws <- phy_16S %>%
     subset_samples(Date == 9) %>%
     subset_samples(Location == "WS") %>%
-    subset_samples(!is.na(particles_total_d20)) %>%
-    ps_mutate(plastic_retained = if_else(particles_total_d20 > 10,  "retained", "not_retained")) 
+    subset_samples(!is.na(particles_total_d20)) 
 
 phy_18S_9_ws <- phy_18S %>%
     subset_samples(Date == 9) %>%
     subset_samples(Location == "WS") %>%
-    subset_samples(!is.na(particles_total_d20)) %>%
-    ps_mutate(plastic_retained = if_else(particles_total_d20 > 10,  "retained", "not_retained"))
-
-# rf_16S %>% as_tibble() %>%
-#     filter(topk_freq > 0.5) 
-# rf_18S %>% as_tibble() %>% 
-#     filter(topk_freq > 0.5)  %>%
-#     print(n = 50)
+    subset_samples(!is.na(particles_total_d20))
 
 top_n <- 20
 df <- rf_16S %>%
-        # filter(topk_freq > 0.5) %>%
         slice_max(mean_importance, n = top_n) %>%
         mutate(base = ifelse(is.na(Genus) | Genus == "", asv, Genus),
                base = make.unique(base),
@@ -44,13 +27,16 @@ p1 <- ggplot(df, aes(x = reorder(label, mean_importance), y = mean_importance)) 
   geom_col(fill = "grey40") +
   geom_errorbar(aes(ymin = ymin, ymax = ymax), width = 0.2, color = "black") +
   coord_flip() +
-  labs(x = "Genus", y = "Mean permutation importance ± SD",
-       title = paste0("Top ", top_n, " taxa (16S)"), tag = "A") +
-  theme_minimal() +
-  theme(plot.tag = element_text(face = "bold"))
+  labs(x = "Bacterial and Archaeal Taxa", y = "Mean permutation importance ± SD", tag = "A") +
+  theme(
+    axis.text.x = element_text(size = 13),
+    axis.text.y = element_text(size = 13),
+    axis.title.y = element_text(size = 16),
+    axis.title.x = element_text(size = 16),
+    plot.tag = element_text(size = 28, face = "bold")
+  )
 
 df <- rf_18S %>%
-        # filter(topk_freq > 0.5) %>%
         slice_max(mean_importance, n = top_n) %>%
         mutate(base = ifelse(is.na(Genus) | Genus == "", asv, Genus),
                base = make.unique(base),
@@ -62,45 +48,31 @@ p2 <- ggplot(df, aes(x = reorder(label, mean_importance), y = mean_importance)) 
   geom_col(fill = "grey40") +
   geom_errorbar(aes(ymin = ymin, ymax = ymax), width = 0.2, color = "black") +
   coord_flip() +
-  labs(x = "Genus", y = "Mean permutation importance ± SD",
-       title = paste0("Top ", top_n, " taxa (18S)"), tag = "A") +
-  theme_minimal() +
-  theme(plot.tag = element_text(face = "bold"))
+  labs(x = "Eukaryotic Taxa", y = "Mean permutation importance ± SD", tag = "C") +
+  theme(
+    axis.text.x = element_text(size = 13),
+    axis.text.y = element_text(size = 13),
+    axis.title.y = element_text(size = 16),
+    axis.title.x = element_text(size = 16),
+    plot.tag = element_text(size = 28, face = "bold")
+  )
 
 ### Bubble plots for top 20 taxa - 16S
 rf_taxa_16S <- rf_16S %>%
     pull(asv)
 
-# have to somehow make abundances, here I use rclr scaled to 0-1 but it might not be right.
+# make Hellinger-transformed relative abundances (sqrt of proportions)
 otu_tbl_16S <- otu_table(phy_16S_9_ws) %>%
     as.data.frame() %>%
     rownames_to_column("asv") %>%
-    filter(asv %in% rf_taxa_16S)  %>% 
     as_tibble() %>%
     pivot_longer(-asv, names_to = "SampleID", values_to = "abundance") %>%
     group_by(SampleID) %>%
-    mutate(rel_abund = abundance / sum(abundance)) %>%
+    mutate(rel_abund = sqrt(abundance / sum(abundance))) %>%
     ungroup() %>%
     select(asv, SampleID, rel_abund) %>%
+    filter(asv %in% rf_taxa_16S)  %>% 
     pivot_wider(names_from = "SampleID", values_from = "rel_abund") 
-    # column_to_rownames("asv") %>% 
-    # as.matrix() %>%
-    # decostand("rclr", MARGIN = 1) %>%
-    # as.data.frame() %>%
-    # rownames_to_column("asv") %>%
-    # as_tibble() %>%
-    # pivot_longer(-asv, names_to = "SampleID", values_to = "rclr_abundance") %>%
-    # group_by(SampleID) %>%
-    # ungroup() %>%
-    # pivot_wider(names_from = "SampleID", values_from = "rclr_abundance") %>%
-    # column_to_rownames("asv") %>% 
-    # as.matrix()
-
-# normalize per-sample so each column sums to 1 (back-transform rclr to positive first)
-# otu_tbl_16S <- exp(otu_tbl_16S)
-# otu_tbl_16S <- sweep(otu_tbl_16S, 2, colSums(otu_tbl_16S), "/") %>%
-#     as.data.frame() %>%
-#     rownames_to_column("asv") %>%  as_tibble()
 
 # order rows by rf_16S importance (descending)
 asv_order_16S <- rf_16S %>% arrange(desc(mean_importance)) %>% pull(asv)
@@ -115,7 +87,6 @@ abund_tb_16S <- otu_tbl_16S %>%
 
 top_n <- 20
 top_asv_16S <- rf_16S %>%
-        # filter(topk_freq > 0.5) %>%
         slice_max(mean_importance, n = top_n)  %>% pull(asv)
 
 abund_tb_16S <- abund_tb_16S %>%
@@ -130,36 +101,25 @@ meta_16S_tb <- meta_16S %>% as_tibble() %>% bind_cols(SampleID = rn)
 
 abund_tb_16S_joined <- abund_tb_16S %>%
     inner_join(meta_16S_tb, by = "SampleID") %>%
-    mutate(SampleID = fct_reorder(SampleID, plastic_concentration)) %>%
+    mutate(Corral = fct_reorder(CorralLetter, plastic_concentration)) %>%
     mutate(Genus_label = paste0(Genus, " (" , round(mean_importance, 2), ") " , " (", round(topk_freq, 2), ")")) %>%
     mutate(Genus_label = fct_reorder(Genus_label, mean_importance))
-
-p3 <- ggplot(abund_tb_16S_joined, aes(x = SampleID, y = Genus_label, size = rel_abund)) +
-geom_point(alpha = 0.8) +
-  scale_size(range = c(0, 8), name = "Relative abundance") +
-#   scale_fill_viridis_c(name = "RF importance") +
-  labs(x = "Sample", y = "Taxon", title = "Top taxa bubble chart (16S)", tag = "B") +
-  theme_minimal() +
-  theme(axis.text.y = element_text(size = 8)) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
-  theme(axis.text.y = element_blank(),
-      axis.title.y = element_blank(),
-      plot.tag = element_text(face = "bold"))
 
 ### Bubble plots for top 20 taxa - 18S
 rf_taxa_18S <- rf_18S %>%
     pull(asv)
 
-# have to somehow make abundances, here I use rclr scaled to 0-1 but it might not be right.
+# make Hellinger-transformed relative abundances (sqrt of proportions)
 otu_tbl_18S <- otu_table(phy_18S_9_ws) %>%
     as.data.frame() %>%
     rownames_to_column("asv") %>%
-    filter(asv %in% rf_taxa_18S)  %>% 
     as_tibble() %>%
     pivot_longer(-asv, names_to = "SampleID", values_to = "abundance") %>%
     group_by(SampleID) %>%
-    mutate(rel_abund = abundance / sum(abundance)) %>%
+    mutate(rel_abund = sqrt(abundance / sum(abundance))) %>%
     ungroup() %>%
     select(asv, SampleID, rel_abund) %>%
+    filter(asv %in% rf_taxa_18S)  %>% 
     pivot_wider(names_from = "SampleID", values_from = "rel_abund") 
 
 # order rows by rf_18S importance (descending)
@@ -175,7 +135,6 @@ abund_tb_18S <- otu_tbl_18S %>%
 
 top_n <- 20
 top_asv_18S <- rf_18S %>%
-        # filter(topk_freq > 0.5) %>%
         slice_max(mean_importance, n = top_n)  %>% pull(asv)
 
 abund_tb_18S <- abund_tb_18S %>%
@@ -190,23 +149,70 @@ meta_18S_tb <- meta_18S %>% as_tibble() %>% bind_cols(SampleID = rn)
 
 abund_tb_18S_joined <- abund_tb_18S %>%
     inner_join(meta_18S_tb, by = "SampleID") %>%
-    mutate(SampleID = fct_reorder(SampleID, plastic_concentration)) %>%
+    mutate(Corral = fct_reorder(CorralLetter, plastic_concentration)) %>%
     mutate(Genus_label = paste0(Genus, " (" , round(mean_importance, 2), ") " , " (", round(topk_freq, 2), ")")) %>%
     mutate(Genus_label = fct_reorder(Genus_label, mean_importance))
 
-p4 <- ggplot(abund_tb_18S_joined, aes(x = SampleID, y = Genus_label, size = rel_abund)) +
-geom_point(alpha = 0.8) +
-  scale_size(range = c(0, 8), name = "Relative abundance") +
-#   scale_fill_viridis_c(name = "RF importance") +
-  labs(x = "Sample", y = "Taxon", title = "Top taxa bubble chart (18S)", tag = "B") +
-  theme_minimal() +
-  theme(axis.text.y = element_text(size = 8)) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
-  theme(axis.text.y = element_blank(),
-      axis.title.y = element_blank(),
-      plot.tag = element_text(face = "bold"))
+# Calculate maximum Hellinger-transformed relative abundance across both datasets for consistent scaling
+# Hellinger transformation (sqrt of proportions) provides scale invariance
+max_hellinger_rel_abund <- max(
+  max(abund_tb_16S_joined$rel_abund, na.rm = TRUE),
+  max(abund_tb_18S_joined$rel_abund, na.rm = TRUE),
+  na.rm = TRUE
+)
 
-library(patchwork)
-p5 <- p1 + p3
-ggsave("figures/fig_S3_random_forests_16S.png", p5, width = 10, height = 8, dpi = 300, scale = 0.8)
-p6 <- p2 + p4
-ggsave("figures/fig_S4_random_forests_18S.png", p6, width = 10, height = 8, dpi = 300, scale = 0.8)
+p3 <- ggplot(abund_tb_16S_joined, aes(x = Corral, y = Genus_label, size = rel_abund)) +
+geom_point(alpha = 0.8) +
+  scale_size_continuous(range = c(0, 8), limits = c(0, max_hellinger_rel_abund), name = "Hellinger abundance") +
+  labs(x = "Corral Letter", y = NULL, tag = "B")
+
+p4 <- ggplot(abund_tb_18S_joined, aes(x = Corral, y = Genus_label, size = rel_abund)) +
+geom_point(alpha = 0.8) +
+  scale_size_continuous(range = c(0, 8), limits = c(0, max_hellinger_rel_abund), name = "Hellinger abundance") +
+  labs(x = "Corral Letter", y = NULL, tag = "D")
+
+# Create four-panel layout in columns: A (16S importance) / C (16S bubbles) | B (18S importance) / D (18S bubbles)
+layout <- "
+    AB
+    CD
+"
+
+# Apply y-axis removal and text sizes to p3 and p4 before combining
+p3 <- p3 + theme(
+    axis.text.y = element_blank(), 
+    axis.title.y = element_blank(),
+    axis.text.x = element_text(size = 13),
+    axis.title.x = element_text(size = 16),
+    plot.tag = element_text(size = 28, face = "bold"),
+    legend.text = element_text(size = 13),
+    legend.title = element_text(size = 16)
+  )
+p4 <- p4 + theme(
+    axis.text.y = element_blank(), 
+    axis.title.y = element_blank(),
+    axis.text.x = element_text(size = 13),
+    axis.title.x = element_text(size = 16),
+    plot.tag = element_text(size = 28, face = "bold"),
+    legend.text = element_text(size = 13),
+    legend.title = element_text(size = 16)
+  )
+
+p_combined <- (p1 + p3 + p2 + p4) + 
+  patchwork::plot_layout(design = layout, guides = "collect", axes = "collect") &
+  theme(
+    legend.position = "bottom", 
+    legend.justification = "left",
+    legend.box.just = "left",
+    legend.margin = margin(t = 0, r = 0, b = 0, l = -20, unit = "pt")
+  )
+
+pdf(
+  "figures/fig_6_random_forests_combined.pdf",
+  width = 11 * 0.8,
+  height = 13 * 0.8,
+  family = "Helvetica",
+  useDingbats = FALSE
+)
+
+print(p_combined)
+dev.off()
