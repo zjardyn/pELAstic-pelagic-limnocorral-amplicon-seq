@@ -2,9 +2,9 @@ source("R/01_load_files.R")
 source("R/functions.R")
 
 theme_set(theme_bw(base_size = 14))
-
-p1 <- plot_stacked_barchart(gene = "16S", taxa_level = "Phylum", n_taxa = 13, italics = FALSE, tag = "A") 
-p2 <- plot_stacked_barchart(gene = "18S", taxa_level = "Family", n_taxa = 13, italics = FALSE, tag = "B") 
+fill <- "H"
+p1 <- plot_stacked_barchart(gene = "16S", taxa_level = "Phylum", n_taxa = 13, italics = FALSE, tag = "A", fill = fill) 
+p2 <- plot_stacked_barchart(gene = "18S", taxa_level = "Family", n_taxa = 13, italics = FALSE, tag = "B", fill = fill) 
 
 p3 <- patchwork::wrap_plots(p1, p2, nrow = 2)
 ggsave("figures/fig_3_stacked_barcharts.png", p3, width = 13, height = 15, dpi = 300, scale = 0.8)

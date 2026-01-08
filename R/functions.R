@@ -82,7 +82,7 @@ pca_plot0 <- function(phy, colour = NULL, shape = NULL, r2_cutoff = 0.02, tax_le
         geom_point(data = smp_scores, aes(x = PC1, y = PC2, fill = !!colour, shape = !!shape), 
                    size = point_size, alpha = 0.7, color = "black", stroke = 0.5) +
         geom_segment(data = selected_spp_scores, aes(x = 0, y = 0, xend = PC1, yend = PC2),
-                     arrow = arrow(length = unit(0.2, "cm")), alpha = 0.7, colour = "#343434") + 
+                     arrow = arrow(length = unit(0.2, "cm")), alpha = 0.7, colour = "black") + 
         geom_text_repel(data = selected_spp_scores, aes(x = PC1, y = PC2, label = Species, fontface = fontface),
         size = tax_lab_size,
         alpha = 1,
@@ -211,7 +211,7 @@ create_ancombc_plot <- function(output_data, variable_name, title = NULL) {
   return(list(plot = p, data = df_fig_var, full_data = df_var))
 }
 
-plot_stacked_barchart <- function(gene = "16S", taxa_level = "Genus", n_taxa = 20, italics = TRUE, position = "fill", tag = "A") {
+plot_stacked_barchart <- function(gene = "16S", taxa_level = "Genus", n_taxa = 20, italics = TRUE, position = "fill", tag = "A", fill = "D") {
 
     phy_obj <- get(glue("phy_{gene}"))
     rel_abund <- rel_abund_phy(phy_obj, 
@@ -245,6 +245,7 @@ plot_stacked_barchart <- function(gene = "16S", taxa_level = "Genus", n_taxa = 2
             position = position,
             global_colours = colorscheme, 
             italics = italics) + 
+            scale_fill_viridis_d(option = fill) +
         ggside::geom_xsidepoint(aes(x = sample_id, y = sum, group = 1), show.legend = FALSE) +
         ggside::geom_xsideline(aes(x = sample_id, y = sum, group = 1), show.legend = FALSE) +
         ggside::scale_xsidey_continuous(limits = c(0, 0.15)) +
@@ -266,6 +267,7 @@ plot_stacked_barchart <- function(gene = "16S", taxa_level = "Genus", n_taxa = 2
             position = position,
             global_colours = colorscheme, 
             italics = italics) + 
+            scale_fill_viridis_d(option = fill) +
         ggside::geom_xsidepoint(aes(x = sample_id, y = sum, group = 1 ), show.legend = FALSE) +
         ggside::geom_xsideline(aes(x = sample_id, y = sum, group = 1 ), show.legend = FALSE) +
         ggside::scale_xsidey_continuous(limits = c(0, 0.15)) +

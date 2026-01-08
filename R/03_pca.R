@@ -8,7 +8,7 @@ p1 <- pca_plot0(phy_16S,
     colour = Date, 
     shape = Location,
     # r2_cutoff = 0.017,
-    r2_cutoff = 0.0188,
+    r2_cutoff = 0.019,
     tax_lab_size = 6,
     title = "16S rRNA", 
     italics = TRUE,
@@ -41,14 +41,14 @@ p2 <- pca_plot0(phy_18S,
     labs(tag = "B") +
     plastic_theme
 
-p3 <- (p1 + p2 + patchwork::plot_layout(ncol = 2, guides = "collect", axes = "collect")) +
+p3 <- (p1 + p2 + patchwork::plot_layout(nrow = 2, guides = "collect", axes = "collect")) +
   patchwork::plot_annotation(
     theme = theme(plot.title = element_text(size = 32, face = "bold"))
   ) &
   plastic_theme &
   theme(legend.position = "bottom")
 
-ggsave("figures/fig_2_pca.png", p3, width = 18, height = 10, dpi = 300, scale = 0.8)
+ggsave("figures/fig_2_pca.png", p3, width = 12, height = 20, dpi = 300, scale = 0.85)
 
 
 # p3 <- pca_plot0(phy_16S, 
