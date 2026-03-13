@@ -14,12 +14,16 @@ phy_18S_9_ws <- phy_18S %>%
     subset_samples(Location == "WS") %>%
     subset_samples(!is.na(particles_total_d20))
 
-top_n <- 20
+top_n <- 50  
 df <- rf_16S %>%
         slice_max(mean_importance, n = top_n) %>%
-        mutate(base = ifelse(is.na(Genus) | Genus == "", asv, Genus),
-               base = make.unique(base),
-               label = paste0(base, " (", round(topk_freq, 2), ")")) %>%
+        mutate(base = ifelse(is.na(Genus) | Genus == "", asv, Genus)) %>%
+        group_by(base) %>%
+        mutate(base_count = n(),
+               base = paste0(base, " ", row_number())) %>%
+        ungroup() %>%
+        mutate(base = ifelse(base_count == 1, sub(" 1$", "", base), base)) %>%
+        mutate(label = paste0(base, " (", round(topk_freq, 2), ")")) %>%
          mutate(ymin = mean_importance - sd_importance,
          ymax = mean_importance + sd_importance)
 
@@ -30,17 +34,22 @@ p1 <- ggplot(df, aes(x = reorder(label, mean_importance), y = mean_importance)) 
   labs(x = "Bacterial and Archaeal Taxa", y = "Mean permutation importance ± SD", tag = "A") +
   theme(
     axis.text.x = element_text(size = 13),
-    axis.text.y = element_text(size = 13),
+    axis.text.y = element_text(size = 7),
     axis.title.y = element_text(size = 16),
     axis.title.x = element_text(size = 16),
     plot.tag = element_text(size = 28, face = "bold")
   )
 
+top_n <- 20
 df <- rf_18S %>%
         slice_max(mean_importance, n = top_n) %>%
-        mutate(base = ifelse(is.na(Genus) | Genus == "", asv, Genus),
-               base = make.unique(base),
-               label = paste0(base, " (", round(topk_freq, 2), ")")) %>%
+        mutate(base = ifelse(is.na(Genus) | Genus == "", asv, Genus)) %>%
+        group_by(base) %>%
+        mutate(base_count = n(),
+               base = paste0(base, " ", row_number())) %>%
+        ungroup() %>%
+        mutate(base = ifelse(base_count == 1, sub(" 1$", "", base), base)) %>%
+        mutate(label = paste0(base, " (", round(topk_freq, 2), ")")) %>%
          mutate(ymin = mean_importance - sd_importance,
          ymax = mean_importance + sd_importance)
 
@@ -85,7 +94,7 @@ abund_tb_16S <- otu_tbl_16S %>%
     inner_join(rf_16S, by = "asv") %>%
     arrange(desc(mean_importance)) 
 
-top_n <- 20
+top_n <- 50 
 top_asv_16S <- rf_16S %>%
         slice_max(mean_importance, n = top_n)  %>% pull(asv)
 

@@ -26,8 +26,8 @@ pca_plot0 <- function(phy, colour = NULL, shape = NULL, r2_cutoff = 0.02, tax_le
     colour <- enquo(colour)
     shape <- enquo(shape)
 
-    if(transform == "hellinger") {
-       tax_table(phy) <- decostand(tax_table(phy), method = "hellinger", MARGIN = 2) 
+    if(transform == "identity") {
+    #    tax_table(phy) <- decostand(tax_table(phy), method = "hellinger", MARGIN = 2) 
        mod <- phy %>%
             tax_transform("identity", rank = "Genus") %>%
             ord_calc(method = "PCA") %>%

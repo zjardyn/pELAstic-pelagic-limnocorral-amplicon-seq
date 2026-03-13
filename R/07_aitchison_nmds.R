@@ -30,7 +30,11 @@ pval <- permanova_result$`Pr(>F)`[1]
 p5.1 <- phy_16S_9 %>%
     tax_transform("identity", rank = "Genus") %>%
     dist_calc("aitchison") %>%
-    ord_calc("NMDS") %>%
+    ord_calc("NMDS") 
+    
+p5.1@ord$stress %>% round(3)
+
+p5.1 <- p5.1 %>%
     ord_plot(color = "plastic_level", size = 5, auto_caption = NA) +
     scale_colour_viridis_d(name = "Plastic Level", labels = stringr::str_to_sentence) + 
     ggrepel::geom_text_repel(aes(label = plastic_concentration), size = 6, show.legend = FALSE) +
@@ -62,7 +66,11 @@ pval <- permanova_result$`Pr(>F)`[1]
 p6.1 <- phy_18S_9 %>%
     tax_transform("identity", rank = "Genus") %>%
     dist_calc("aitchison") %>%
-    ord_calc("NMDS") %>%
+    ord_calc("NMDS")
+    
+p6.1@ord$stress %>% round(3)
+
+p6.1 <- p6.1 %>%
     ord_plot(color = "plastic_level", size = 5, auto_caption = NA) +
     scale_colour_viridis_d(name = "Plastic Level", labels = stringr::str_to_sentence) + 
     ggrepel::geom_text_repel(aes(label = plastic_concentration), size = 6, show.legend = FALSE) +

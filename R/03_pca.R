@@ -12,7 +12,8 @@ p1 <- pca_plot0(phy_16S,
     tax_lab_size = 6,
     title = "16S rRNA", 
     italics = TRUE,
-    point_size = 5) + 
+    point_size = 5,
+    transform = "identity") + 
     scale_shape_manual(name = "Location",
                       values = c("MS" = 21, "WS" = 24),
                       labels = c("MS" = "Microscope slide", "WS" = "Wall strip")) + 
@@ -31,7 +32,8 @@ p2 <- pca_plot0(phy_18S,
     tax_lab_size = 6,
     title = "18S rRNA", 
     italics = TRUE,
-    point_size = 5) + 
+    point_size = 5,
+    transform = "identity") + 
     scale_shape_manual(name = "Location",
                       values = c("MS" = 21, "WS" = 24),
                       labels = c("MS" = "Microscope slide", "WS" = "Wall strip")) + 
@@ -48,8 +50,19 @@ p3 <- (p1 + p2 + patchwork::plot_layout(nrow = 2, guides = "collect", axes = "co
   plastic_theme &
   theme(legend.position = "bottom")
 
-ggsave("figures/fig_2_pca.png", p3, width = 12, height = 20, dpi = 300, scale = 0.85)
+# ggsave("figures/fig_2_pca.png", p3, width = 12, height = 20, dpi = 300, scale = 0.85)
 
+
+pdf(
+  "figures/fig_S2_pca.pdf",
+  width = 12 * 0.85,
+  height = 20 * 0.85,
+  family = "Helvetica",
+  useDingbats = FALSE
+)
+
+print(p3)
+dev.off()
 
 # p3 <- pca_plot0(phy_16S, 
 #     colour = plastic_conc_log, 
