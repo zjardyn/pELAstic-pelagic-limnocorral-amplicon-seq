@@ -211,7 +211,7 @@ create_ancombc_plot <- function(output_data, variable_name, title = NULL) {
   return(list(plot = p, data = df_fig_var, full_data = df_var))
 }
 
-plot_stacked_barchart <- function(gene = "16S", taxa_level = "Genus", n_taxa = 20, italics = TRUE, position = "fill", tag = "A", fill = "D") {
+plot_stacked_barchart <- function(gene = "16S", taxa_level = "Genus", n_taxa = 20, italics = TRUE, position = "fill", tag = "A", fill = "D", x_lab = NULL) {
 
     phy_obj <- get(glue("phy_{gene}"))
     rel_abund <- rel_abund_phy(phy_obj, 
@@ -251,14 +251,14 @@ plot_stacked_barchart <- function(gene = "16S", taxa_level = "Genus", n_taxa = 2
         ggside::scale_xsidey_continuous(limits = c(0, 0.15)) +
         theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
         guides(fill=guide_legend(title = glue("{taxa_level}")))  +
-        scale_y_continuous(expand = expansion(mult = c(0, .05)), name = "Relative Abundance")  +
+        scale_y_continuous(expand = expansion(mult = c(0, .05)), name = "Relative abundance")  +
         facet_grid(Location ~ Date, scales = "free_x", labeller = labeller(
             Location = function(x) ifelse(x == "WS", "Wall strip", ifelse(x == "MS", "Microscope slide", x)),
             Date = function(x) paste("Week", x)
         )) +
-        theme(strip.text = element_text(size = 10),
+        theme(strip.text = element_text(size = 12),
               axis.text.x = element_text(size = 10)) +
-        labs(x = "Sample name", tag = tag) +
+        labs(x = x_lab, tag = tag) +
         theme(plot.tag = element_text(face = "bold", size = 28))
 
     p2 <- inner_join(rel_abund_ms, new_layer, by = "sample_id") %>%
@@ -280,9 +280,9 @@ plot_stacked_barchart <- function(gene = "16S", taxa_level = "Genus", n_taxa = 2
             Location = function(x) ifelse(x == "WS", "Wall strip", ifelse(x == "MS", "Microscope slide", x)),
             Date = function(x) paste("Week", x)
         )) +
-        theme(strip.text = element_text(size = 10),
+        theme(strip.text = element_text(size = 12),
               axis.text.x = element_text(size = 10)) +
-        labs(x = "Sample name")
+        labs(x = x_lab)
 
     # Figure 2.A 
     layout <- "AAAB"

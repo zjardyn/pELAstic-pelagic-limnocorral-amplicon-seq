@@ -25,29 +25,40 @@ tb <-tibble(plastic_concentration = meta_data$plastic_concentration,
 p1 <- ggplot(tb, aes(x = reorder(Corral, plastic_concentration), y = plastic_concentration, fill = plastic_level)) +
   geom_point(size = 7, shape = 21, show.legend = TRUE) +
   geom_text(aes(label = plastic_concentration), vjust = -1, size = 5, fontface = "bold") +
-  scale_fill_viridis_d(name = "Plastic Level", labels = c("None", "Low", "Medium", "High")) +
+  scale_fill_viridis_d(name = "Plastic level", labels = c("None", "Low", "Medium", "High")) +
   scale_x_discrete(expand = expansion(add = c(1, 1))) +
   scale_y_log10(
-    name = "Particles/L",
+    name = expression(Particles ~ L^{- ~ 1}),
     limits = c(0.5, 300000),
     labels = scales::comma
   ) +
-  labs(x = "Corral Letter", tag = "B") +
+  labs(x = "Corral letter", tag = "B") +
   plastic_theme
 
 p2 <- meta_data %>% 
     select(particles_total_d20, CorralLetter, plastic_concentration, plastic_level) %>%
-    ggplot(aes(x = reorder(CorralLetter, plastic_concentration), y = particles_total_d20, fill = plastic_level)) +
+    arrange(plastic_concentration, CorralLetter) %>%
+    mutate(
+      x_fct = factor(
+        paste(plastic_concentration, CorralLetter, sep = ":::"),
+        levels = unique(paste(plastic_concentration, CorralLetter, sep = ":::"))
+      )
+    ) %>%
+    ggplot(aes(x = x_fct, y = particles_total_d20, fill = plastic_level)) +
     geom_point(size = 7, shape = 21, show.legend = TRUE) +
-    scale_fill_viridis_d(name = "Plastic Level", labels = c("None", "Low", "Medium", "High")) +
-    scale_x_discrete(expand = expansion(add = c(1, 1))) + 
-    ylab(expression("Particles/cm"^2)) + 
+    scale_fill_viridis_d(name = "Plastic level", labels = c("None", "Low", "Medium", "High")) +
+    scale_x_discrete(
+      expand = expansion(add = c(1, 1)),
+      labels = function(x) sub(":::.*", "", x)
+    ) + 
+    ylab(expression(Particles ~ cm^{- ~ 2})) + 
     scale_y_continuous(limits = c(0, 30))  + 
-    labs(x = "Corral Letter", tag = "C") +
-    plastic_theme
+    labs(x = expression(Particles ~ L^{- ~ 1}), tag = "C") +
+    plastic_theme +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 # Read in the image
-img <- magick::image_read("figures/limnocorral.png")
+img <- magick::image_read("figures/limnocorrals.png")
 # Convert to a rasterGrob for ggplot
 img_grob <- grid::rasterGrob(img, interpolate = TRUE)
 
@@ -61,5 +72,5 @@ p_img <- ggplot() +
 # Combine all three plots
 p3 <- (p_img + p1 + p2 + patchwork::plot_layout(ncol = 3, guides = "collect", axes = "collect")) & 
   theme(legend.position = "bottom")
-ggsave("figures/fig_1_plastic_density.png", p3, width = 20, height = 7, dpi = 300, scale = 0.8)
+ggsave("figures/fig_1_plastic_density.png", p3, width = 20, height = 8, dpi = 300, scale = 0.8)
 
