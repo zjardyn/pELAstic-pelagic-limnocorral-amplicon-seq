@@ -14,15 +14,15 @@
 *.Rproj
 
 # Output files
-*.pdf
-*.png
-*.jpg
-*.jpeg
-*.svg
-Rplots.pdf
+# *.pdf
+# *.png
+# *.jpg
+# *.jpeg
+# *.svg
+# Rplots.pdf
 
 # Figures directory - ignore PDF and PNG but keep limnocorral.png
 figures/*.pdf
 figures/*.png
-!figures/limnocorral2.png
+!figures/limnocorrals.png
 

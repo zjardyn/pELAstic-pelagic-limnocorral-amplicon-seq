@@ -165,7 +165,7 @@ shared_scale <- scale_fill_gradient2(
   midpoint = 0,
   limits = c(-max_abs_lfc, max_abs_lfc),
   oob = scales::squish,
-  name = "Log Fold Change",
+  name = "Log fold change",
   guide = guide_colorbar(title.position = "top", title.hjust = 0.5)
 )
 
@@ -174,8 +174,8 @@ p_heatmap_16S <- ggplot(heatmap_data_16S, aes(x = plastic_level, y = taxon_displ
   geom_tile(color = "white", linewidth = 0.5) +
   shared_scale +
   labs(
-    x = "Plastic Level", 
-    y = "Bacterial & Archeal Taxa",
+    x = "Plastic level", 
+    y = "Prokaryotic taxa",
     tag = "A"
   ) +
   theme_minimal() +
@@ -190,8 +190,8 @@ p_heatmap_18S <- ggplot(heatmap_data_18S, aes(x = plastic_level, y = taxon_displ
   geom_tile(color = "white", linewidth = 0.5) +
   shared_scale +
   labs(
-    x = "Plastic Level", 
-    y = "Eukaryotic Taxa",
+    x = "Plastic level", 
+    y = "Eukaryotic taxa",
     tag = "B"
   ) +
   theme_minimal() +

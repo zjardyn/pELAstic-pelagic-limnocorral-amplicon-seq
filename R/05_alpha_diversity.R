@@ -1,8 +1,77 @@
-source("R/01_load_files.R")
+source("R/01_load_files2.R")
 source("R/functions.R")
 
 # theme_set(theme_linedraw(base_size = 12))
 theme_set(theme_bw(base_size = 14))
+
+# Drop samples with library size below this (total sum of taxa counts). Set to 0 to keep all.
+# 5000 drops the two lowest 16S libs (~4.7–4.8k); 18S also drops WS_A_6 (failed) and WS_G_6 (~4.1k).
+min_sum_taxa <- 5000L
+
+# Sum of taxa abundances per sample (library size)
+taxa_sums_per_sample <- function(phy, label) {
+  tibble(
+    dataset = label,
+    sample = sample_names(phy),
+    sum_taxa = as.numeric(sample_sums(phy))
+  ) %>%
+    arrange(sample)
+}
+
+prune_samples_min_depth <- function(phy, label, min_reads) {
+  if (min_reads <= 0) {
+    return(phy)
+  }
+  ss <- sample_sums(phy)
+  keep <- unname(ss) >= min_reads
+  dropped <- names(ss)[!keep]
+  if (length(dropped)) {
+    message(
+      label, ": removing ", length(dropped), " sample(s) with sum_taxa < ", min_reads, ": ",
+      paste(dropped, collapse = ", ")
+    )
+  } else {
+    message(label, ": no samples below sum_taxa = ", min_reads)
+  }
+  phy <- prune_samples(keep, phy)
+  prune_taxa(taxa_sums(phy) > 0, phy)
+}
+
+message("Taxa sums per sample (before depth filter)")
+print(taxa_sums_per_sample(phy_16S, "16S"), n = Inf)
+print(taxa_sums_per_sample(phy_18S, "18S"), n = Inf)
+
+phy_16S <- prune_samples_min_depth(phy_16S, "16S", min_sum_taxa)
+phy_18S <- prune_samples_min_depth(phy_18S, "18S", min_sum_taxa)
+
+message("Taxa sums per sample (after depth filter)")
+print(taxa_sums_per_sample(phy_16S, "16S"), n = Inf)
+print(taxa_sums_per_sample(phy_18S, "18S"), n = Inf)
+
+# Rarefy to even depth (reads per sample). Set equal to min_sum_taxa, or lower, so all samples qualify.
+rarefy_depth <- min_sum_taxa
+if (rarefy_depth > 0L) {
+  rarefy_one <- function(phy, label) {
+    m <- min(sample_sums(phy))
+    if (m < rarefy_depth) {
+      stop(label, ": min sum_taxa (", m, ") is below rarefy_depth (", rarefy_depth, ")")
+    }
+    rarefy_even_depth(
+      phy,
+      sample.size = rarefy_depth,
+      rngseed = 1L,
+      replace = FALSE, # phyloseq default is TRUE; FALSE = classical rarefaction (subsample w/o replacement)
+      trimOTUs = TRUE,
+      verbose = FALSE
+    )
+  }
+  message("Rarefying to ", rarefy_depth, " reads per sample")
+  phy_16S <- rarefy_one(phy_16S, "16S")
+  phy_18S <- rarefy_one(phy_18S, "18S")
+  message("Taxa sums per sample (after rarefaction)")
+  print(taxa_sums_per_sample(phy_16S, "16S"), n = Inf)
+  print(taxa_sums_per_sample(phy_18S, "18S"), n = Inf)
+}
 
 # 16S
 meta <- sample_data(phy_16S)
@@ -37,8 +106,8 @@ alpha <- phy_16S %>%
     as_tibble() %>%
     # Arrange sample by plastic_concentration (same as stacked bar charts)
     mutate(sample = factor(sample)) %>%
-    mutate(Location = factor(Location, levels = c("WS", "MS")),
-           Date = factor(Date, levels = c(3, 6, 9))) %>%
+    mutate(Location = factor(Location, levels = c("WS", "MS"))) %>%
+        #    Date = factor(Date, levels = c(3, 6, 9))) %>%
     # Reorder samples by plastic concentration within each Location
     group_by(Location) %>%
     mutate(sample = fct_reorder(sample, plastic_concentration, .desc = F)) %>%
@@ -177,8 +246,8 @@ alpha <- phy_18S %>%
     as_tibble() %>%
     # Arrange sample by plastic_concentration (same as stacked bar charts)
     mutate(sample = factor(sample)) %>%
-    mutate(Location = factor(Location, levels = c("WS", "MS")),
-           Date = factor(Date, levels = c(3, 6, 9))) %>%
+    mutate(Location = factor(Location, levels = c("WS", "MS"))) %>%
+        #    Date = factor(Date, levels = c(3, 6, 9))) %>%
     # Reorder samples by plastic concentration within each Location
     group_by(Location) %>%
     mutate(sample = fct_reorder(sample, plastic_concentration, .desc = F)) %>%

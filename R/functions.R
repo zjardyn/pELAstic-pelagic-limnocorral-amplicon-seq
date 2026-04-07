@@ -221,8 +221,8 @@ plot_stacked_barchart <- function(gene = "16S", taxa_level = "Genus", n_taxa = 2
             pool_taxa(n_taxa = n_taxa, keep_metadata = TRUE) %>%
             arrange_taxa() %>%
             mutate(sample_id = factor(sample_id)) %>%
-            mutate(sample_id = fct_reorder(sample_id, plastic_concentration, .desc = F)) %>%
-            mutate(Date = factor(Date, levels = c(3, 6, 9)))
+            mutate(sample_id = fct_reorder(sample_id, plastic_concentration, .desc = F))
+            # mutate(Date = factor(Date, levels = c(3, 6, 9)))
 
     unique_taxa <- rel_abund %>%
         add_other() %>%

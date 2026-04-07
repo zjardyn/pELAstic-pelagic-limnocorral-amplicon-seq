@@ -45,24 +45,24 @@ before_18S_taxa <- if (exists("phy_18S")) phyloseq::ntaxa(phy_18S) else NA_integ
 phy_16S <- subset_taxa(phy_16S, Order != "Chloroplast")
 phy_16S <- subset_taxa(phy_16S, Family != "Mitochondria")
 
-after_16S_rm_chl_mito <- phyloseq::ntaxa(phy_16S)
+# after_16S_rm_chl_mito <- phyloseq::ntaxa(phy_16S)
 
-phy_16S <- phy_16S %>%
-    tax_filter(min_prevalence = 0.2, min_sample_abundance = 3) 
+# phy_16S <- phy_16S %>%
+#     tax_filter(min_prevalence = 0.2, min_sample_abundance = 3) 
 
-after_16S_tax_filter <- phyloseq::ntaxa(phy_16S)
-phy_18S <- phy_18S %>%
-    tax_filter(min_prevalence = 0.2, min_sample_abundance = 3)
+# after_16S_tax_filter <- phyloseq::ntaxa(phy_16S)
+# phy_18S <- phy_18S %>%
+#     tax_filter(min_prevalence = 0.2, min_sample_abundance = 3)
 
 # Report intermediate for 18S before other filters
-after_18S_tax_filter <- phyloseq::ntaxa(phy_18S)
+# after_18S_tax_filter <- phyloseq::ntaxa(phy_18S)
 
 # Just don't do it!
 # phy_16S <- phyloseq::rarefy_even_depth(phy_16S)
 # phy_18S <- phyloseq::rarefy_even_depth(phy_18S)
 phy_18S <- subset_taxa(phy_18S, Genus != "Incertae_sedis Family")
 
-after_18S_rm_incertae <- phyloseq::ntaxa(phy_18S)
+# after_18S_rm_incertae <- phyloseq::ntaxa(phy_18S)
 
 phy_18S <- phy_18S %>% tax_fix(unknowns = c("eukaryotic_picoplankton_environmental_sample", "uncultured", "uncultured_Eimeriidae", "uncultured_eukaryote", "uncultured_freshwater_eukaryote","Incertae_Sedis Family", "uncultured_Chlorophyta", "uncultured_fungus"),
                                anon_unique = TRUE)
@@ -80,11 +80,11 @@ phy_16S <- phy_16S %>% ps_mutate(Date = factor(Date, levels = c(3, 6, 9, 10)))
 phy_18S <- phy_18S %>% ps_mutate(Date = factor(Date, levels = c(3, 6, 9, 10)))
 
 # Print concise summary
-cat(sprintf(
-    "16S taxa: before=%s, after_rm_chl_mito=%s, after_tax_filter=%s\n",
-    before_16S_taxa, after_16S_rm_chl_mito, after_16S_tax_filter
-))
-cat(sprintf(
-    "18S taxa: before=%s, after_tax_filter=%s, after_rm_incertae=%s\n",
-    before_18S_taxa, after_18S_tax_filter, after_18S_rm_incertae 
-))
+# cat(sprintf(
+#     "16S taxa: before=%s, after_rm_chl_mito=%s, after_tax_filter=%s\n",
+#     before_16S_taxa, after_16S_rm_chl_mito, after_16S_tax_filter
+# ))
+# cat(sprintf(
+#     "18S taxa: before=%s, after_tax_filter=%s, after_rm_incertae=%s\n",
+#     before_18S_taxa, after_18S_tax_filter, after_18S_rm_incertae 
+# ))

@@ -14,7 +14,7 @@ phy_18S_9_ws <- phy_18S %>%
     subset_samples(Location == "WS") %>%
     subset_samples(!is.na(particles_total_d20))
 
-top_n <- 50  
+top_n <- 20  
 df <- rf_16S %>%
         slice_max(mean_importance, n = top_n) %>%
         mutate(base = ifelse(is.na(Genus) | Genus == "", asv, Genus)) %>%
@@ -31,10 +31,10 @@ p1 <- ggplot(df, aes(x = reorder(label, mean_importance), y = mean_importance)) 
   geom_col(fill = "grey40") +
   geom_errorbar(aes(ymin = ymin, ymax = ymax), width = 0.2, color = "black") +
   coord_flip() +
-  labs(x = "Bacterial and Archaeal Taxa", y = "Mean permutation importance ± SD", tag = "A") +
+  labs(x = "Prokaryotic taxa", y = "Mean permutation importance ± SD", tag = "A") +
   theme(
     axis.text.x = element_text(size = 13),
-    axis.text.y = element_text(size = 7),
+    axis.text.y = element_text(size = 13),
     axis.title.y = element_text(size = 16),
     axis.title.x = element_text(size = 16),
     plot.tag = element_text(size = 28, face = "bold")
@@ -57,7 +57,7 @@ p2 <- ggplot(df, aes(x = reorder(label, mean_importance), y = mean_importance)) 
   geom_col(fill = "grey40") +
   geom_errorbar(aes(ymin = ymin, ymax = ymax), width = 0.2, color = "black") +
   coord_flip() +
-  labs(x = "Eukaryotic Taxa", y = "Mean permutation importance ± SD", tag = "C") +
+  labs(x = "Eukaryotic taxa", y = "Mean permutation importance ± SD", tag = "C") +
   theme(
     axis.text.x = element_text(size = 13),
     axis.text.y = element_text(size = 13),
@@ -94,9 +94,11 @@ abund_tb_16S <- otu_tbl_16S %>%
     inner_join(rf_16S, by = "asv") %>%
     arrange(desc(mean_importance)) 
 
-top_n <- 50 
+# Same n as 18S so panel height per taxon matches (50 rows made 16S bubbles look shrunken)
+top_n_bubble <- 20L
 top_asv_16S <- rf_16S %>%
-        slice_max(mean_importance, n = top_n)  %>% pull(asv)
+        slice_max(mean_importance, n = top_n_bubble) %>%
+        pull(asv)
 
 abund_tb_16S <- abund_tb_16S %>%
     filter(asv %in% top_asv_16S) %>%
@@ -142,9 +144,9 @@ abund_tb_18S <- otu_tbl_18S %>%
     inner_join(rf_18S, by = "asv") %>%
     arrange(desc(mean_importance)) 
 
-top_n <- 20
 top_asv_18S <- rf_18S %>%
-        slice_max(mean_importance, n = top_n)  %>% pull(asv)
+        slice_max(mean_importance, n = top_n_bubble) %>%
+        pull(asv)
 
 abund_tb_18S <- abund_tb_18S %>%
     filter(asv %in% top_asv_18S) %>%
@@ -173,12 +175,12 @@ max_hellinger_rel_abund <- max(
 p3 <- ggplot(abund_tb_16S_joined, aes(x = Corral, y = Genus_label, size = rel_abund)) +
 geom_point(alpha = 0.8) +
   scale_size_continuous(range = c(0, 8), limits = c(0, max_hellinger_rel_abund), name = "Hellinger abundance") +
-  labs(x = "Corral Letter", y = NULL, tag = "B")
+  labs(x = "Limnocorral ID", y = NULL, tag = "B")
 
 p4 <- ggplot(abund_tb_18S_joined, aes(x = Corral, y = Genus_label, size = rel_abund)) +
 geom_point(alpha = 0.8) +
   scale_size_continuous(range = c(0, 8), limits = c(0, max_hellinger_rel_abund), name = "Hellinger abundance") +
-  labs(x = "Corral Letter", y = NULL, tag = "D")
+  labs(x = "Limnocorral ID", y = NULL, tag = "D")
 
 # Create four-panel layout in columns: A (16S importance) / C (16S bubbles) | B (18S importance) / D (18S bubbles)
 layout <- "
@@ -190,7 +192,7 @@ layout <- "
 p3 <- p3 + theme(
     axis.text.y = element_blank(), 
     axis.title.y = element_blank(),
-    axis.text.x = element_text(size = 13),
+    axis.text.x = element_blank(),
     axis.title.x = element_text(size = 16),
     plot.tag = element_text(size = 28, face = "bold"),
     legend.text = element_text(size = 13),

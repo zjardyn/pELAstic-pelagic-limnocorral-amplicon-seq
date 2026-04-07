@@ -35,8 +35,8 @@ rel_abund <- rel_abund_phy(get(glue("phy_16S_cyano")),
             filter(taxon != "Other") %>%
             arrange_taxa() %>%
             mutate(sample_id = factor(sample_id)) %>%
-            mutate(sample_id = fct_reorder(sample_id, plastic_concentration, .desc = F)) %>%
-            mutate(Date = factor(Date, levels = c(3, 6, 9)))
+            mutate(sample_id = fct_reorder(sample_id, plastic_concentration, .desc = F)) 
+            # mutate(Date = factor(Date, levels = c(3, 6, 9)))
 
 # Get max and min rel_abund for consistent scale between plots
 rel_1 <- rel_abund %>% filter(Location == "WS")
@@ -94,8 +94,8 @@ rel_abund <- rel_abund_phy(get(glue("phy_16S_proteo")),
             filter(taxon != "Other") %>%
             arrange_taxa() %>%
             mutate(sample_id = factor(sample_id)) %>%
-            mutate(sample_id = fct_reorder(sample_id, plastic_concentration, .desc = F)) %>%
-            mutate(Date = factor(Date, levels = c(3, 6, 9)))
+            mutate(sample_id = fct_reorder(sample_id, plastic_concentration, .desc = F)) 
+            # mutate(Date = factor(Date, levels = c(3, 6, 9)))
 
 # Get max and min rel_abund for consistent scale between plots
 rel_1 <- rel_abund %>% filter(Location == "WS")

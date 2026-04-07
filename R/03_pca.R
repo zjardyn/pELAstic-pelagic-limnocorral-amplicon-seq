@@ -13,7 +13,7 @@ p1 <- pca_plot0(phy_16S,
     title = "16S rRNA", 
     italics = TRUE,
     point_size = 5,
-    transform = "identity") + 
+    transform = "clr") + 
     scale_shape_manual(name = "Location",
                       values = c("MS" = 21, "WS" = 24),
                       labels = c("MS" = "Microscope slide", "WS" = "Wall strip")) + 
@@ -33,7 +33,7 @@ p2 <- pca_plot0(phy_18S,
     title = "18S rRNA", 
     italics = TRUE,
     point_size = 5,
-    transform = "identity") + 
+    transform = "clr") + 
     scale_shape_manual(name = "Location",
                       values = c("MS" = 21, "WS" = 24),
                       labels = c("MS" = "Microscope slide", "WS" = "Wall strip")) + 

@@ -36,7 +36,7 @@ p5.1@ord$stress %>% round(3)
 
 p5.1 <- p5.1 %>%
     ord_plot(color = "plastic_level", size = 5, auto_caption = NA) +
-    scale_colour_viridis_d(name = "Plastic Level", labels = stringr::str_to_sentence) + 
+    scale_colour_viridis_d(name = "Plastic level", labels = stringr::str_to_sentence) + 
     ggrepel::geom_text_repel(aes(label = plastic_concentration), size = 6, show.legend = FALSE) +
     ggtitle(glue("16S rRNA, PERMANOVA p = {round(pval, 3)}")) +
     labs(tag = "A") +
@@ -72,7 +72,7 @@ p6.1@ord$stress %>% round(3)
 
 p6.1 <- p6.1 %>%
     ord_plot(color = "plastic_level", size = 5, auto_caption = NA) +
-    scale_colour_viridis_d(name = "Plastic Level", labels = stringr::str_to_sentence) + 
+    scale_colour_viridis_d(name = "Plastic level", labels = stringr::str_to_sentence) + 
     ggrepel::geom_text_repel(aes(label = plastic_concentration), size = 6, show.legend = FALSE) +
     ggtitle(glue("18S rRNA, PERMANOVA p = {round(pval, 3)}")) +
     labs(tag = "B") +
