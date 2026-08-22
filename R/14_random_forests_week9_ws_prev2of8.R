@@ -1,4 +1,4 @@
-# Random forests (week-9 wall strip) — ASV-level transform sensitivity grid.
+# Random forests (week-9 wall strip) — ASV-level transform + bootstrap importance.
 #
 # Load: R/01_load_files2.R (no full-table tax_filter)
 # Samples: Date == 9, Location == WS; drop bad none (default WS_H_9) → n = 8
@@ -7,14 +7,21 @@
 # Response: log1p(particles_total_d20)
 # Features: ASVs (not genus-aggregated)
 #
-# Transform grid (1000 runs each by default):
+# Robustness design:
+#   - No outer CV (no 5-fold / LOOCV)
+#   - Fixed RF params (mtry = floor(sqrt(p)), min.node.size = 5)
+#   - 1000 outer bootstrap resamples of the 8 samples (sample composition)
+#   - ranger permutation importance within each bootstrap fit
+#   - OOB error recorded as a descriptive diagnostic only
+#   - Transform grid measures zero-handling sensitivity (not the main robustness test)
+#
+# Transform grid:
 #   clr_1, clr_0.5, clr_0.1  — vegan CLR with QUBS-matched pseudocounts
 #   rclr                     — vegan rCLR without matrix completion (impute=FALSE)
-#   rclr_optspace            — vegan rCLR with optspace completion (impute=TRUE;
-#                              DEICODE-style; vegan 2.7+ default)
+#   rclr_optspace            — vegan rCLR with optspace completion (impute=TRUE)
 #
-# Per transform: mean importance ± SD, topk_freq
-# After all transforms: intersection of top-K ASV sets
+# Per transform: mean importance ± SD, topk_freq across bootstraps
+# Across transforms: n_transforms_in_topk (not only strict intersection)
 #
 # Server:
 #   RF_N_CL=40 RF_DATASET=both Rscript R/14_random_forests_week9_ws_prev2of8.R
@@ -25,7 +32,6 @@ suppressPackageStartupMessages({
   library(dplyr)
   library(tidyr)
   library(tibble)
-  library(caret)
   library(ranger)
   library(vegan)
   library(glue)
@@ -35,8 +41,8 @@ source("R/01_load_files2.R")
 
 # --- runtime knobs ---
 num_cores <- as.integer(Sys.getenv("RF_N_CL", unset = "40"))
-n_runs <- as.integer(Sys.getenv("RF_N_RUNS", unset = "1000"))
-num_trees <- as.integer(Sys.getenv("RF_NUM_TREES", unset = "10000"))
+n_boot <- as.integer(Sys.getenv("RF_N_BOOT", unset = Sys.getenv("RF_N_RUNS", unset = "1000")))
+num_trees <- as.integer(Sys.getenv("RF_NUM_TREES", unset = "5000"))
 dataset <- toupper(Sys.getenv("RF_DATASET", unset = "both")) # 16S | 18S | both
 min_reads <- as.integer(Sys.getenv("RF_MIN_READS", unset = "3"))
 min_samples <- as.integer(Sys.getenv("RF_MIN_SAMPLES", unset = "2")) # primary=2; sens=3
@@ -54,15 +60,9 @@ stopifnot(dataset %in% c("16S", "18S", "BOTH"))
 options(ranger.num.threads = num_cores)
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
-unregister_dopar <- function() {
-  env <- foreach:::.foreachGlobals
-  rm(list = ls(name = env), pos = env)
-}
-unregister_dopar()
-
 message(sprintf(
-  "RF week-9 WS | cores=%d | runs=%d | trees=%d | dataset=%s | filter=>=%d reads in >=%d samples | drop=%s | top_k=%d",
-  num_cores, n_runs, num_trees, dataset, min_reads, min_samples,
+  "RF week-9 WS | cores=%d | outer_boot=%d | trees=%d | dataset=%s | filter=>=%d reads in >=%d samples | drop=%s | top_k=%d | no outer CV",
+  num_cores, n_boot, num_trees, dataset, min_reads, min_samples,
   paste(drop_samples, collapse = ","), top_k
 ))
 
@@ -146,90 +146,124 @@ transform_counts <- function(X, transform) {
   Z
 }
 
+drop_near_zero_var <- function(X, freq_cut = 95 / 5, unique_cut = 10) {
+  # caret::nearZeroVar logic without pulling in caret/trainControl
+  if (ncol(X) < 2L) {
+    return(X)
+  }
+  drop <- vapply(seq_len(ncol(X)), function(j) {
+    x <- X[, j]
+    if (all(!is.finite(x))) {
+      return(TRUE)
+    }
+    u <- length(unique(x[is.finite(x)]))
+    if (u <= unique_cut) {
+      tab <- sort(table(x), decreasing = TRUE)
+      if (length(tab) == 1L) {
+        return(TRUE)
+      }
+      return((tab[[1]] / tab[[2]]) >= freq_cut)
+    }
+    FALSE
+  }, logical(1))
+  if (all(drop)) {
+    return(X)
+  }
+  X[, !drop, drop = FALSE]
+}
+
 TRANSFORM_IDS <- c("clr_1", "clr_0.5", "clr_0.1", "rclr", "rclr_optspace")
 
 rf_importance_one <- function(
     phy,
     transform,
-    seeds = NULL,
-    n_runs = 1000L,
-    num_trees = 10000L,
+    n_boot = 1000L,
+    num_trees = 5000L,
     min_node_size = 5L,
-    splitrule = "variance",
-    metric = "RMSE",
     top_k = 20L,
     verbose = TRUE
 ) {
   X0 <- counts_samples_by_taxa(phy)
   X <- transform_counts(X0, transform)
-
-  if (ncol(X) > 1L) {
-    nzv_idx <- caret::nearZeroVar(as.data.frame(X))
-    if (length(nzv_idx) > 0L) {
-      X <- X[, -nzv_idx, drop = FALSE]
-    }
-  }
+  X <- drop_near_zero_var(X)
   if (ncol(X) < 2L) {
     stop("Fewer than 2 taxa remain after transform/NZV for ", transform)
   }
 
   samp_df <- as.data.frame(phyloseq::sample_data(phy))
   Y <- log1p(as.numeric(samp_df[rownames(X), "particles_total_d20"]))
+  names(Y) <- rownames(X)
   if (any(!is.finite(Y))) {
     stop("Non-finite response values for transform ", transform)
   }
 
+  n <- nrow(X)
   p <- ncol(X)
   mtry <- max(1L, floor(sqrt(p)))
-  tune_grid <- expand.grid(
-    mtry = mtry,
-    splitrule = splitrule,
-    min.node.size = min_node_size
-  )
-  ctrl <- caret::trainControl(method = "cv", number = 5L, savePredictions = "final")
+  sample_ids <- rownames(X)
 
-  if (is.null(seeds)) {
-    seeds <- seq_len(n_runs)
-  }
   if (isTRUE(verbose)) {
     message(sprintf(
-      "  transform=%s | n=%d | p=%d | runs=%d | mtry=%d",
-      transform, nrow(X), p, length(seeds), mtry
+      "  transform=%s | n=%d | p=%d | outer_boot=%d | trees=%d | mtry=%d (fixed)",
+      transform, n, p, n_boot, num_trees, mtry
     ))
   }
 
-  imps <- lapply(seq_along(seeds), function(i) {
-    s <- seeds[[i]]
-    if (isTRUE(verbose) && (i == 1L || i %% 50L == 0L || i == length(seeds))) {
-      message(sprintf("  run %d/%d (seed=%s)", i, length(seeds), as.character(s)))
+  # Shared bootstrap index matrix (reproducible across transforms if seed set upstream)
+  boot_idx <- matrix(NA_integer_, nrow = n_boot, ncol = n)
+  for (b in seq_len(n_boot)) {
+    set.seed(100000L + b)
+    boot_idx[b, ] <- sample.int(n, size = n, replace = TRUE)
+  }
+
+  imps <- vector("list", n_boot)
+  oob_diag <- vector("list", n_boot)
+
+  for (b in seq_len(n_boot)) {
+    if (isTRUE(verbose) && (b == 1L || b %% 50L == 0L || b == n_boot)) {
+      message(sprintf("  bootstrap %d/%d", b, n_boot))
     }
-    set.seed(s)
-    m <- caret::train(
-      x = X,
-      y = Y,
-      method = "ranger",
-      trControl = ctrl,
-      tuneGrid = tune_grid,
-      metric = metric,
-      importance = "permutation",
+    idx <- boot_idx[b, ]
+    Xb <- X[idx, , drop = FALSE]
+    Yb <- Y[idx]
+    # Unique rownames for ranger when outer bootstrap duplicates samples
+    rownames(Xb) <- make.unique(sample_ids[idx], sep = "__b")
+
+    dat <- data.frame(y = Yb, Xb, check.names = FALSE)
+    set.seed(200000L + b)
+    fit <- ranger::ranger(
+      dependent.variable.name = "y",
+      data = dat,
       num.trees = num_trees,
-      num.threads = num_cores,
+      mtry = mtry,
+      min.node.size = min_node_size,
+      importance = "permutation",
       replace = TRUE,
-      sample.fraction = 1
+      sample.fraction = 1,
+      num.threads = num_cores,
+      seed = 200000L + b,
+      verbose = FALSE
     )
-    vi <- caret::varImp(m)$importance
-    tibble::tibble(
-      asv = rownames(vi),
-      Overall = vi$Overall,
-      run = i,
-      seed = s
+
+    vi <- fit$variable.importance
+    imps[[b]] <- tibble::tibble(
+      asv = names(vi),
+      Overall = as.numeric(vi),
+      boot = b
     )
-  })
+    oob_diag[[b]] <- tibble::tibble(
+      boot = b,
+      oob_mse = fit$prediction.error,
+      oob_r2 = fit$r.squared
+    )
+  }
 
   imp_df <- dplyr::bind_rows(imps) %>%
-    dplyr::group_by(run) %>%
+    dplyr::group_by(boot) %>%
     dplyr::mutate(rank = dplyr::dense_rank(dplyr::desc(Overall))) %>%
     dplyr::ungroup()
+
+  oob_df <- dplyr::bind_rows(oob_diag)
 
   agg <- imp_df %>%
     dplyr::group_by(asv) %>%
@@ -255,26 +289,53 @@ rf_importance_one <- function(
 
   list(
     transform = transform,
-    n_samples = nrow(X),
-    n_taxa = ncol(X),
+    n_samples = n,
+    n_taxa = p,
+    mtry = mtry,
     top_k = top_k,
+    n_boot = n_boot,
     importance = out,
-    run_level = imp_df
+    boot_level = imp_df,
+    oob_diagnostic = oob_df,
+    oob_summary = tibble::tibble(
+      mean_oob_mse = mean(oob_df$oob_mse, na.rm = TRUE),
+      sd_oob_mse = stats::sd(oob_df$oob_mse, na.rm = TRUE),
+      mean_oob_r2 = mean(oob_df$oob_r2, na.rm = TRUE),
+      sd_oob_r2 = stats::sd(oob_df$oob_r2, na.rm = TRUE)
+    )
   )
 }
 
-intersect_topk <- function(result_list, top_k = 20L) {
+# Count how many transforms place each ASV in the top-K (by mean importance)
+transform_topk_membership <- function(result_list, top_k = 20L) {
   sets <- lapply(result_list, function(res) {
     head(res$importance$asv, top_k)
   })
   names(sets) <- vapply(result_list, `[[`, character(1), "transform")
-  common <- Reduce(intersect, sets)
+  all_asvs <- unique(unlist(sets, use.names = FALSE))
+  memb <- tibble::tibble(asv = all_asvs) %>%
+    dplyr::mutate(
+      n_transforms_in_topk = vapply(
+        asv,
+        function(a) sum(vapply(sets, function(s) a %in% s, logical(1))),
+        integer(1)
+      ),
+      transforms_in_topk = vapply(
+        asv,
+        function(a) paste(names(sets)[vapply(sets, function(s) a %in% s, logical(1))], collapse = ";"),
+        character(1)
+      )
+    ) %>%
+    dplyr::arrange(dplyr::desc(n_transforms_in_topk), asv)
+
   list(
     top_k = top_k,
+    n_transforms = length(sets),
     n_per_transform = vapply(sets, length, integer(1)),
-    n_intersection = length(common),
-    asvs = common,
-    sets = sets
+    sets = sets,
+    membership = memb,
+    # strict intersection kept as a convenience summary, not the primary metric
+    intersection_asvs = Reduce(intersect, sets)
   )
 }
 
@@ -305,7 +366,7 @@ run_marker <- function(phy, label) {
     res <- rf_importance_one(
       phy_f,
       transform = tr,
-      n_runs = n_runs,
+      n_boot = n_boot,
       num_trees = num_trees,
       top_k = top_k,
       verbose = TRUE
@@ -318,23 +379,36 @@ run_marker <- function(phy, label) {
         filter = filt,
         drop_samples = drop_samples,
         transform = tr,
-        n_runs = n_runs,
-        num_trees = num_trees,
+        design = list(
+          outer = "bootstrap_samples",
+          n_boot = n_boot,
+          num_trees = num_trees,
+          mtry = res$mtry,
+          outer_cv = "none",
+          importance = "ranger_permutation",
+          oob = "diagnostic_only"
+        ),
         result = res
       ),
       path_i
     )
     message("Wrote ", normalizePath(path_i, winslash = "/", mustWork = FALSE))
+    message(sprintf(
+      "  OOB diagnostic: mean R2=%.3f (SD=%.3f); mean MSE=%.4f",
+      res$oob_summary$mean_oob_r2, res$oob_summary$sd_oob_r2, res$oob_summary$mean_oob_mse
+    ))
   }
 
-  ix <- intersect_topk(results, top_k = top_k)
-  # Annotated intersection table using clr_1 importances when available
+  sens <- transform_topk_membership(results, top_k = top_k)
   ref <- results[["clr_1"]]$importance
-  ix_tbl <- tibble::tibble(asv = ix$asvs) %>%
+  memb_tbl <- sens$membership %>%
     dplyr::left_join(ref, by = "asv") %>%
-    dplyr::arrange(dplyr::desc(mean_importance))
+    dplyr::arrange(
+      dplyr::desc(n_transforms_in_topk),
+      dplyr::desc(mean_importance)
+    )
 
-  summary_path <- file.path(out_dir, sprintf("rf_%s_intersection_topk%d.rds", tag, top_k))
+  summary_path <- file.path(out_dir, sprintf("rf_%s_transform_topk%d_membership.rds", tag, top_k))
   saveRDS(
     list(
       marker = label,
@@ -342,22 +416,25 @@ run_marker <- function(phy, label) {
       drop_samples = drop_samples,
       transforms = TRANSFORM_IDS,
       top_k = top_k,
-      intersection = ix,
-      intersection_table = ix_tbl,
+      n_boot = n_boot,
+      transform_sensitivity = sens,
+      membership_table = memb_tbl,
       per_transform_paths = file.path(out_dir, sprintf("rf_%s_%s.rds", tag, TRANSFORM_IDS))
     ),
     summary_path
   )
   message(sprintf(
-    "%s intersection of top-%d across %d transforms: n=%d",
-    label, top_k, length(TRANSFORM_IDS), ix$n_intersection
+    "%s top-%d transform membership: %d ASVs in >=1 transform; strict intersection n=%d",
+    label, top_k, nrow(memb_tbl), length(sens$intersection_asvs)
   ))
   message("Wrote ", normalizePath(summary_path, winslash = "/", mustWork = FALSE))
-  if (nrow(ix_tbl) > 0L) {
-    print(ix_tbl %>% dplyr::select(asv, Genus, mean_importance, sd_importance, topk_freq), n = 50)
-  }
+  print(
+    memb_tbl %>%
+      dplyr::select(asv, Genus, n_transforms_in_topk, mean_importance, sd_importance, topk_freq, transforms_in_topk),
+    n = 50
+  )
 
-  invisible(list(results = results, intersection = ix, intersection_table = ix_tbl))
+  invisible(list(results = results, transform_sensitivity = sens, membership_table = memb_tbl))
 }
 
 if (dataset %in% c("16S", "BOTH")) {
