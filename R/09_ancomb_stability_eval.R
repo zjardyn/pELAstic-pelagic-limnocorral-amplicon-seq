@@ -83,8 +83,8 @@ lfc_long_18S <- all_significant_taxa_data_18S %>%
     )
   )
 
-# Calculate bootstrap-based statistics
-bootstrap_stats_16S <- lfc_long_16S %>%
+# Per-(taxon, level) bootstrap summaries (before stability cut)
+bootstrap_stats_16S_all <- lfc_long_16S %>%
   group_by(taxon, plastic_level) %>%
   summarise(
     n_runs = n(),
@@ -92,10 +92,9 @@ bootstrap_stats_16S <- lfc_long_16S %>%
     passed_ss = all(passed_ss, na.rm = TRUE),
     .groups = "drop"
   ) %>%
-  arrange(desc(n_runs), plastic_level) %>% 
-  filter(n_runs > 50)
+  arrange(desc(n_runs), plastic_level)
 
-bootstrap_stats_18S <- lfc_long_18S %>%
+bootstrap_stats_18S_all <- lfc_long_18S %>%
   group_by(taxon, plastic_level) %>%
   summarise(
     n_runs = n(),
@@ -103,145 +102,160 @@ bootstrap_stats_18S <- lfc_long_18S %>%
     passed_ss = all(passed_ss, na.rm = TRUE),
     .groups = "drop"
   ) %>%
-  arrange(desc(n_runs), plastic_level) %>%
-  filter(n_runs > 50)
+  arrange(desc(n_runs), plastic_level)
 
-# Create heatmap data - prepare for plotting
-# Create heatmap data - prepare for plotting
-# First create labels without asterisks for ordering
-heatmap_data_16S <- bootstrap_stats_16S %>%
-  mutate(
-    plastic_level = factor(plastic_level, levels = c("low", "medium", "high"), 
-                          labels = c("Low", "Medium", "High")),
-    taxon_display = paste0(taxon, " (", n_runs, ")")
+make_trend_heatmap_combined <- function(stats_16S, stats_18S, min_n_runs, outfile) {
+  bootstrap_stats_16S <- stats_16S %>% filter(n_runs >= min_n_runs)
+  bootstrap_stats_18S <- stats_18S %>% filter(n_runs >= min_n_runs)
+
+  message(
+    if (min_n_runs <= 0L) {
+      "Stability cut: all taxa ever trend-significant"
+    } else {
+      paste0("Stability cut n_runs >= ", min_n_runs, " (", min_n_runs, "%)")
+    },
+    ": 16S taxa=", n_distinct(bootstrap_stats_16S$taxon),
+    ", 18S taxa=", n_distinct(bootstrap_stats_18S$taxon)
   )
 
-heatmap_data_18S <- bootstrap_stats_18S %>%
-  mutate(
-    plastic_level = factor(plastic_level, levels = c("low", "medium", "high"), 
-                          labels = c("Low", "Medium", "High")),
-    taxon_display = paste0(taxon, " (", n_runs, ")")
-  )
-
-# Order taxa by summed LFC (descending) for better visualization
-order_taxa_16S <- heatmap_data_16S %>%
-  group_by(taxon_display) %>%
-  summarise(sum_lfc = sum(lfc), .groups = "drop") %>%
-  arrange(desc(sum_lfc)) %>%
-  pull(taxon_display)
-
-order_taxa_18S <- heatmap_data_18S %>%
-  group_by(taxon_display) %>%
-  summarise(sum_lfc = sum(lfc), .groups = "drop") %>%
-  arrange(desc(sum_lfc)) %>%
-  pull(taxon_display)
-
-# Convert to factors for ordering
-heatmap_data_16S <- heatmap_data_16S %>% 
-  mutate(taxon_display = factor(taxon_display, levels = order_taxa_16S))
-
-heatmap_data_18S <- heatmap_data_18S %>% 
-  mutate(taxon_display = factor(taxon_display, levels = order_taxa_18S))
-
-# Create mappings for colors (based on passed_ss)
-taxon_display_passed_ss_16S <- heatmap_data_16S %>%
-  select(taxon_display, passed_ss) %>%
-  distinct() %>%
-  deframe()
-
-taxon_display_passed_ss_18S <- heatmap_data_18S %>%
-  select(taxon_display, passed_ss) %>%
-  distinct() %>%
-  deframe()
-
-# Create color scale (yellow to white to purple)
-max_abs_lfc <- max(c(abs(heatmap_data_16S$lfc), abs(heatmap_data_18S$lfc)), na.rm = TRUE)
-if (!is.finite(max_abs_lfc) || max_abs_lfc == 0) max_abs_lfc <- 1
-
-shared_scale <- scale_fill_gradient2(
-  low = "#440154",  # Purple
-  mid = "#F7F7F7",  # White
-  high = "#FDE725", # Yellow
-  midpoint = 0,
-  limits = c(-max_abs_lfc, max_abs_lfc),
-  oob = scales::squish,
-  name = "Log fold change",
-  guide = guide_colorbar(title.position = "top", title.hjust = 0.5)
-)
-
-# Create the heatmap
-p_heatmap_16S <- ggplot(heatmap_data_16S, aes(x = plastic_level, y = taxon_display, fill = lfc)) +
-  geom_tile(color = "white", linewidth = 0.5) +
-  shared_scale +
-  labs(
-    x = "Plastic level", 
-    y = "Prokaryotic taxa",
-    tag = "A"
-  ) +
-  theme_minimal() +
-  theme(
-    axis.text.y = element_text(
-      color = ifelse(taxon_display_passed_ss_16S[levels(heatmap_data_16S$taxon_display)], "#000000", "#8a8a8a"),
-      size = 13
+  heatmap_data_16S <- bootstrap_stats_16S %>%
+    mutate(
+      plastic_level = factor(
+        plastic_level,
+        levels = c("low", "medium", "high"),
+        labels = c("Low", "Medium", "High")
+      ),
+      taxon_display = paste0(taxon, " (", n_runs, ")")
     )
-  )
 
-p_heatmap_18S <- ggplot(heatmap_data_18S, aes(x = plastic_level, y = taxon_display, fill = lfc)) +
-  geom_tile(color = "white", linewidth = 0.5) +
-  shared_scale +
-  labs(
-    x = "Plastic level", 
-    y = "Eukaryotic taxa",
-    tag = "B"
-  ) +
-  theme_minimal() +
-  theme(
-    axis.text.y = element_text(
-      color = ifelse(taxon_display_passed_ss_18S[levels(heatmap_data_18S$taxon_display)], "#000000", "#8a8a8a"),
-      size = 13
+  heatmap_data_18S <- bootstrap_stats_18S %>%
+    mutate(
+      plastic_level = factor(
+        plastic_level,
+        levels = c("low", "medium", "high"),
+        labels = c("Low", "Medium", "High")
+      ),
+      taxon_display = paste0(taxon, " (", n_runs, ")")
     )
+
+  make_one_panel <- function(heatmap_data, y_lab, tag) {
+    if (nrow(heatmap_data) == 0L) {
+      return(
+        ggplot() +
+          annotate(
+            "text", x = 0.5, y = 0.5,
+            label = paste0("No taxa with n_runs >= ", min_n_runs),
+            size = 4.5
+          ) +
+          labs(x = "Plastic level", y = y_lab, tag = tag) +
+          theme_void() +
+          theme(
+            axis.title = element_text(size = 16),
+            plot.tag = element_text(size = 28, face = "bold"),
+            plot.margin = margin(20, 20, 20, 20)
+          )
+      )
+    }
+
+    order_taxa <- order_taxa_plastic_lfc_columns(
+      heatmap_data,
+      id_col = "taxon_display",
+      level_col = "plastic_level",
+      value_col = "lfc",
+      col_order = c("Low", "Medium", "High"),
+      tol = 0.15
+    )
+
+    heatmap_data <- heatmap_data %>%
+      mutate(taxon_display = factor(taxon_display, levels = order_taxa))
+
+    taxon_display_passed_ss <- heatmap_data %>%
+      select(taxon_display, passed_ss) %>%
+      distinct() %>%
+      deframe()
+
+    ggplot(heatmap_data, aes(x = plastic_level, y = taxon_display, fill = lfc)) +
+      geom_tile(color = "white", linewidth = 0.5) +
+      labs(x = "Plastic level", y = y_lab, tag = tag) +
+      theme_minimal() +
+      theme(
+        axis.text.y = element_text(
+          color = ifelse(
+            taxon_display_passed_ss[levels(heatmap_data$taxon_display)],
+            "#000000",
+            "#8a8a8a"
+          ),
+          size = 13
+        )
+      )
+  }
+
+  lfc_vals <- c(heatmap_data_16S$lfc, heatmap_data_18S$lfc)
+  max_abs_lfc <- if (length(lfc_vals)) max(abs(lfc_vals), na.rm = TRUE) else 1
+  if (!is.finite(max_abs_lfc) || max_abs_lfc == 0) max_abs_lfc <- 1
+
+  shared_scale <- scale_fill_gradient2(
+    low = "#440154",
+    mid = "#F7F7F7",
+    high = "#FDE725",
+    midpoint = 0,
+    limits = c(-max_abs_lfc, max_abs_lfc),
+    oob = scales::squish,
+    name = "Log fold change",
+    guide = guide_colorbar(title.position = "top", title.hjust = 0.5)
   )
 
-# Create layout for combined plots
-layout <- "
+  p_heatmap_16S <- make_one_panel(heatmap_data_16S, "Prokaryotic taxa", "A")
+  p_heatmap_18S <- make_one_panel(heatmap_data_18S, "Eukaryotic taxa", "B")
+
+  if (nrow(heatmap_data_16S) > 0L) p_heatmap_16S <- p_heatmap_16S + shared_scale
+  if (nrow(heatmap_data_18S) > 0L) p_heatmap_18S <- p_heatmap_18S + shared_scale
+
+  layout <- "
   A
   A
   A
-  A 
-  A 
+  A
+  A
   A
   B "
 
-# Create the combined plot with layout
-p_combined <- (p_heatmap_16S / p_heatmap_18S) + 
-  patchwork::plot_layout(design = layout, guides = "collect", axes = "collect") & 
-  theme(
-    axis.text.x = element_text(size = 13),
-    axis.title.y = element_text(size = 16),
-    axis.title.x = element_text(size = 16),
-    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
-    plot.subtitle = element_text(hjust = 0.5, size = 12),
-    legend.position = "bottom",
-    legend.justification = c(0, 0),
-    legend.text = element_text(size = 13),
-    legend.title = element_text(size = 16),
-    panel.grid = element_blank(),
-    axis.ticks = element_blank(),
-    plot.tag = element_text(size = 28, face = "bold")
+  p_combined <- (p_heatmap_16S / p_heatmap_18S) +
+    patchwork::plot_layout(design = layout, guides = "collect", axes = "collect") &
+    theme(
+      axis.text.x = element_text(size = 13),
+      axis.title.y = element_text(size = 16),
+      axis.title.x = element_text(size = 16),
+      plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+      plot.subtitle = element_text(hjust = 0.5, size = 12),
+      legend.position = "bottom",
+      legend.justification = c(0, 0),
+      legend.text = element_text(size = 13),
+      legend.title = element_text(size = 16),
+      panel.grid = element_blank(),
+      axis.ticks = element_blank(),
+      plot.tag = element_text(size = 28, face = "bold")
+    )
+
+  pdf(
+    outfile,
+    width = 10 * 0.8,
+    height = 12 * 0.8,
+    family = "Helvetica",
+    useDingbats = FALSE
   )
+  print(p_combined)
+  dev.off()
+  message("Wrote ", outfile)
+}
 
-# save as text-editable pdf for inkscape editing, can't italcize the taxa 
-pdf(
-  "figures/fig_5_trend_analysis_heatmap_stable_taxa_combined.pdf",
-  width = 10 * 0.8,
-  height = 12 * 0.8,
-  family = "Helvetica",
-  useDingbats = FALSE
+# Stability cut: n_runs >= 20 (20% of 100 boots)
+make_trend_heatmap_combined(
+  bootstrap_stats_16S_all,
+  bootstrap_stats_18S_all,
+  min_n_runs = 20L,
+  outfile = "figures/20pct_fig_5_trend_analysis_heatmap_stable_taxa_combined.pdf"
 )
-
-print(p_combined)
-dev.off()
-
 ### Transposed heatmaps - taxa on x-axis, plastic level on y-axis
 # Reverse order for 16S transposed plot
 # heatmap_data_16S_transposed <- heatmap_data_16S %>%

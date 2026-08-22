@@ -48,42 +48,89 @@ p3 <- (p1 + p2 + patchwork::plot_layout(nrow = 2, guides = "collect", axes = "co
     theme = theme(plot.title = element_text(size = 32, face = "bold"))
   ) &
   plastic_theme &
-  theme(legend.position = "bottom")
+  theme(legend.position = "bottom", legend.box = "vertical")
 
-# ggsave("figures/fig_2_pca.png", p3, width = 12, height = 20, dpi = 300, scale = 0.85)
-
-
+# Main: coloured by week
 pdf(
-  "figures/fig_S2_pca.pdf",
+  "figures/fig3_2.pdf",
   width = 12 * 0.85,
   height = 20 * 0.85,
   family = "Helvetica",
   useDingbats = FALSE
 )
-
 print(p3)
 dev.off()
 
-# p3 <- pca_plot0(phy_16S, 
-#     colour = plastic_conc_log, 
-#     shape = Date,
-#     r2_cutoff = 0.017,
-#     title = "16S PCA", 
-#     italics = FALSE,
-#     point_size = 3) + 
-#     scale_color_viridis_c(name = "log(Plastic concentration)") +
-#     scale_shape_discrete(name = "Week")
+# Week-9 wall strips at the two highest plastic treatments (G = 7071, D = 29240)
+hi_week9_ws <- sample_data(phy_16S) %>%
+  as_tibble(rownames = "Sample") %>%
+  filter(Location == "WS", as.character(Date) == "9", plastic_level == "high") %>%
+  pull(Sample)
 
-# ggsave("figures/16S_pca_plastic.png", p3, width = 10, height = 8, dpi = 300, scale = 0.8)
+hi_week9_ws_18S <- sample_data(phy_18S) %>%
+  as_tibble(rownames = "Sample") %>%
+  filter(Location == "WS", as.character(Date) == "9", plastic_level == "high") %>%
+  pull(Sample)
 
-# p4 <- pca_plot0(phy_18S, 
-#     colour = plastic_conc_log, 
-#     shape = Date,
-#     r2_cutoff = 0.03,
-#     title = "18S PCA", 
-#     italics = FALSE,
-#     point_size = 3) + 
-#     scale_color_viridis_c(name = "log(Plastic concentration)") +
-#     scale_shape_discrete(name = "Week")
+message("Highlighting 16S: ", paste(hi_week9_ws, collapse = ", "))
+message("Highlighting 18S: ", paste(hi_week9_ws_18S, collapse = ", "))
 
-# ggsave("figures/18S_pca_plastic.png", p4, width = 10, height = 8, dpi = 300, scale = 0.8)
+# Supplementary: coloured by plastic level; highlight high week-9 wall strips
+p1_plastic <- pca_plot0(phy_16S,
+    colour = plastic_level,
+    shape = Location,
+    r2_cutoff = 0.019,
+    tax_lab_size = 6,
+    title = "16S rRNA",
+    italics = TRUE,
+    point_size = 5,
+    transform = "clr",
+    highlight_samples = hi_week9_ws,
+    show_vectors = FALSE,
+    time_site_ellipses = TRUE) +
+    scale_shape_manual(name = "Location",
+                      values = c("MS" = 21, "WS" = 24),
+                      labels = c("MS" = "Microscope slide", "WS" = "Wall strip")) +
+    scale_fill_viridis_d(name = "Plastic level", labels = c("None", "Low", "Medium", "High")) +
+    guides(shape = guide_legend(override.aes = list(color = "black", stroke = 0.5)),
+           fill = guide_legend(override.aes = list(color = "black", stroke = 0.5, shape = 21))) +
+    labs(tag = "A") +
+    plastic_theme
+
+p2_plastic <- pca_plot0(phy_18S,
+    colour = plastic_level,
+    shape = Location,
+    r2_cutoff = 0.035,
+    tax_lab_size = 6,
+    title = "18S rRNA",
+    italics = TRUE,
+    point_size = 5,
+    transform = "clr",
+    highlight_samples = hi_week9_ws_18S,
+    show_vectors = FALSE,
+    time_site_ellipses = TRUE) +
+    scale_shape_manual(name = "Location",
+                      values = c("MS" = 21, "WS" = 24),
+                      labels = c("MS" = "Microscope slide", "WS" = "Wall strip")) +
+    scale_fill_viridis_d(name = "Plastic level", labels = c("None", "Low", "Medium", "High")) +
+    guides(shape = guide_legend(override.aes = list(color = "black", stroke = 0.5)),
+           fill = guide_legend(override.aes = list(color = "black", stroke = 0.5, shape = 21))) +
+    labs(tag = "B") +
+    plastic_theme
+
+p3_plastic <- (p1_plastic + p2_plastic + patchwork::plot_layout(nrow = 2, guides = "collect", axes = "collect")) +
+  patchwork::plot_annotation(
+    theme = theme(plot.title = element_text(size = 32, face = "bold"))
+  ) &
+  plastic_theme &
+  theme(legend.position = "bottom", legend.box = "vertical")
+
+pdf(
+  "figures/figS3_2.pdf",
+  width = 12 * 0.85,
+  height = 20 * 0.85,
+  family = "Helvetica",
+  useDingbats = FALSE
+)
+print(p3_plastic)
+dev.off()

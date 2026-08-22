@@ -80,23 +80,33 @@ meta <- meta %>%
     as_tibble() %>%
     bind_cols(sample = r.names)
 
-# Calculate Berger-Parker index
+# Berger-Parker = max taxon abundance / total (same taxonomic rank as Observed/Shannon)
 berger_parker <- function(x) {
   max(x) / sum(x)
 }
 
-# Calculate Berger-Parker for 16S
-bp_16S <- data.frame(
-    sample = sample_names(phy_16S),
-    Berger_Parker = apply(otu_table(phy_16S), 2, berger_parker)
-)
+berger_parker_from_phy <- function(phy) {
+  otu <- as(otu_table(phy), "matrix")
+  if (!taxa_are_rows(phy)) {
+    otu <- t(otu)
+  }
+  apply(otu, 2, berger_parker)
+}
 
-# alpha <- phy_16S %>%
-alpha <- phy_16S %>%
+# Genus table shared by Observed, Shannon, and Berger-Parker
+phy_16S_genus <- phy_16S %>%
     phyloseq_validate(remove_undetected = TRUE) %>%
     tax_fix() %>%
     tax_transform("identity", "Genus") %>%
-    ps_arrange(Date) %>%
+    ps_arrange(Date)
+
+bp_16S <- data.frame(
+    sample = sample_names(phy_16S_genus),
+    Berger_Parker = unname(berger_parker_from_phy(phy_16S_genus)),
+    stringsAsFactors = FALSE
+)
+
+alpha <- phy_16S_genus %>%
     phyloseq::estimate_richness(measures = c("Observed", "Shannon")) %>%
     as.data.frame() %>%
     rownames_to_column("sample") %>%
@@ -226,17 +236,20 @@ meta <- meta %>%
     as_tibble() %>%
     bind_cols(sample = r.names)
 
-# Calculate Berger-Parker for 18S
-bp_18S <- data.frame(
-    sample = sample_names(phy_18S),
-    Berger_Parker = apply(otu_table(phy_18S), 2, berger_parker)
-)
-
-alpha <- phy_18S %>%
+# Genus table shared by Observed, Shannon, and Berger-Parker
+phy_18S_genus <- phy_18S %>%
     phyloseq_validate(remove_undetected = TRUE) %>%
     tax_fix() %>%
     tax_transform("identity", "Genus") %>%
-    ps_arrange(Date) %>%
+    ps_arrange(Date)
+
+bp_18S <- data.frame(
+    sample = sample_names(phy_18S_genus),
+    Berger_Parker = unname(berger_parker_from_phy(phy_18S_genus)),
+    stringsAsFactors = FALSE
+)
+
+alpha <- phy_18S_genus %>%
     phyloseq::estimate_richness(measures = c("Observed", "Shannon")) %>%
     as.data.frame() %>%
     rownames_to_column("sample") %>%

@@ -1,14 +1,14 @@
 #!/bin/bash
 
 # Docker runner script for R analysis environment
-# This script runs the zjardyn/pelagic_amplicon Docker container
+# This script runs the zjardyn/plastic-amplicon Docker container
 # with the project directory mounted and radian as the default shell
 
 # Set the project directory (current directory)
 PROJECT_DIR="/Users/zjardynhood/Desktop/pelagic-microplastics-amplicon"
 
-# Docker image name
-IMAGE_NAME="zjardyn/pelagic_amplicon:latest"
+# Docker image name (shared with qubs_amplicon)
+IMAGE_NAME="zjardyn/plastic-amplicon:latest"
 
 # Check if Docker is running
 if ! docker info > /dev/null 2>&1; then
