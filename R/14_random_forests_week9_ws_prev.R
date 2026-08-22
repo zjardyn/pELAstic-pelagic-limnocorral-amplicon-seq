@@ -16,8 +16,8 @@
 # After all transforms: intersection of top-K ASV sets
 #
 # Server:
-#   RF_N_CL=40 RF_DATASET=both Rscript R/13_random_forests_week9_ws_prev.R
-#   RF_N_CL=40 RF_DATASET=16S RF_MIN_SAMPLES=3 Rscript R/13_random_forests_week9_ws_prev.R
+#   RF_N_CL=40 RF_DATASET=both Rscript R/14_random_forests_week9_ws_prev.R
+#   RF_N_CL=40 RF_DATASET=16S RF_MIN_SAMPLES=3 Rscript R/14_random_forests_week9_ws_prev.R
 
 suppressPackageStartupMessages({
   library(phyloseq)
