@@ -9,8 +9,9 @@
 #
 # Transform grid (1000 runs each by default):
 #   clr_1, clr_0.5, clr_0.1  — vegan CLR with QUBS-matched pseudocounts
-#   rclr                     — vegan robust CLR (observed parts only)
-#   rclr_cmult               — zCompositions::cmultRepl (GBM) then CLR
+#   rclr                     — vegan rCLR without matrix completion (impute=FALSE)
+#   rclr_optspace            — vegan rCLR with optspace completion (impute=TRUE;
+#                              DEICODE-style; vegan 2.7+ default)
 #
 # Per transform: mean importance ± SD, topk_freq
 # After all transforms: intersection of top-K ASV sets
@@ -52,13 +53,6 @@ drop_samples <- drop_samples[nzchar(drop_samples)]
 stopifnot(dataset %in% c("16S", "18S", "BOTH"))
 options(ranger.num.threads = num_cores)
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
-
-# Matrix completion dependency (not in base plastic-amplicon image)
-if (!requireNamespace("zCompositions", quietly = TRUE)) {
-  message("Installing zCompositions for rCLR + matrix completion ...")
-  install.packages("zCompositions", repos = "https://cloud.r-project.org")
-}
-suppressPackageStartupMessages(library(zCompositions))
 
 unregister_dopar <- function() {
   env <- foreach:::.foreachGlobals
@@ -129,17 +123,14 @@ transform_counts <- function(X, transform) {
     }
     Z <- vegan::decostand(X, method = "clr", MARGIN = 1L, pseudocount = pc)
   } else if (identical(transform, "rclr")) {
-    Z <- vegan::decostand(X, method = "rclr", MARGIN = 1L)
-  } else if (identical(transform, "rclr_cmult")) {
-    # GBM multiplicative replacement of zeros, then CLR (matrix completion path)
-    Xi <- zCompositions::cmultRepl(
-      X,
-      method = "GBM",
-      output = "p-counts",
-      z.delete = FALSE,
-      suppress.print = TRUE
-    )
-    Z <- vegan::decostand(Xi, method = "clr", MARGIN = 1L, pseudocount = 0)
+    # Observed-parts geometric mean only; zeros are NA after log.
+    # For dense RF input, set those entries to 0 on the rCLR scale
+    # (no optspace / DEICODE completion).
+    Z <- vegan::decostand(X, method = "rclr", MARGIN = 1L, impute = FALSE)
+    Z[!is.finite(Z)] <- 0
+  } else if (identical(transform, "rclr_optspace")) {
+    # vegan 2.7+ optspace matrix completion (DEICODE-style; default impute=TRUE)
+    Z <- vegan::decostand(X, method = "rclr", MARGIN = 1L, impute = TRUE)
   } else {
     stop("Unknown transform: ", transform)
   }
@@ -155,7 +146,7 @@ transform_counts <- function(X, transform) {
   Z
 }
 
-TRANSFORM_IDS <- c("clr_1", "clr_0.5", "clr_0.1", "rclr", "rclr_cmult")
+TRANSFORM_IDS <- c("clr_1", "clr_0.5", "clr_0.1", "rclr", "rclr_optspace")
 
 rf_importance_one <- function(
     phy,
