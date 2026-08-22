@@ -115,7 +115,8 @@ p_nmds <- combine_time_plastic_w9_6panel(
     ord_16S_w9$nmds_scores, x = NMDS1, y = NMDS2, colour = plastic_level,
     title = "16S week-9 wall strip", tag = "C",
     fill_name = "Plastic level",
-    fill_labels = c("None", "Low", "Medium", "High")
+    fill_labels = c("None", "Low", "Medium", "High"),
+    sample_label = "CorralLetter"
   ),
   plot_ord_points(
     ord_18S$nmds_scores, x = NMDS1, y = NMDS2, colour = Date,
@@ -132,7 +133,8 @@ p_nmds <- combine_time_plastic_w9_6panel(
     ord_18S_w9$nmds_scores, x = NMDS1, y = NMDS2, colour = plastic_level,
     title = "18S week-9 wall strip", tag = "F",
     fill_name = "Plastic level",
-    fill_labels = c("None", "Low", "Medium", "High")
+    fill_labels = c("None", "Low", "Medium", "High"),
+    sample_label = "CorralLetter"
   ),
   caption_16s_time = caption_time_site(ts_16S),
   caption_16s_plastic = caption_plastic(pl_16S),

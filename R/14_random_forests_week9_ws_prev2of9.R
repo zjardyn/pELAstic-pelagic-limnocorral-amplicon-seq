@@ -1,22 +1,21 @@
 # Random forests (week-9 wall strip) — ASV-level transform + bootstrap importance.
 #
 # Load: R/01_load_files2.R (no full-table tax_filter)
-# Samples: Date == 9, Location == WS; drop bad none (default WS_H_9) → n = 8
-# Prevalence (primary): >=3 reads in >=2 of the 8 samples (~25%)
-#   Sensitivity: set RF_MIN_SAMPLES=3 for >=3 of 8
+# Samples: Date == 9, Location == WS; keep all 9 (including WS_H_9)
+# Prevalence (primary): >=3 reads in >=2 of 9 samples (~22%)
 # Response: log1p(particles_total_d20)
 # Features: ASVs (not genus-aggregated)
 #
 # Robustness design:
 #   - No outer CV (no 5-fold / LOOCV)
 #   - Fixed RF params (mtry = floor(sqrt(p)), min.node.size = 5)
-#   - 1000 outer bootstrap resamples of the 8 samples (sample composition)
+#   - 1000 outer bootstrap resamples of the 9 samples (sample composition)
 #   - ranger permutation importance within each bootstrap fit
 #   - OOB error recorded as a descriptive diagnostic only
 #   - Transform grid measures zero-handling sensitivity (not the main robustness test)
 #
 # Transform grid:
-#   clr_1, clr_0.5, clr_0.1  — vegan CLR with QUBS-matched pseudocounts
+#   clr_1, clr_0.1  — vegan CLR with QUBS-matched pseudocounts
 #   rclr                     — vegan rCLR without matrix completion (impute=FALSE)
 #   rclr_optspace            — vegan rCLR with optspace completion (impute=TRUE)
 #
@@ -24,8 +23,7 @@
 # Across transforms: n_transforms_in_topk (not only strict intersection)
 #
 # Server:
-#   RF_N_CL=40 RF_DATASET=both Rscript R/14_random_forests_week9_ws_prev2of8.R
-#   RF_N_CL=40 RF_DATASET=16S RF_MIN_SAMPLES=3 Rscript R/14_random_forests_week9_ws_prev2of8.R
+#   RF_N_CL=40 RF_DATASET=both Rscript R/14_random_forests_week9_ws_prev2of9.R
 
 suppressPackageStartupMessages({
   library(phyloseq)
@@ -45,11 +43,11 @@ n_boot <- as.integer(Sys.getenv("RF_N_BOOT", unset = Sys.getenv("RF_N_RUNS", uns
 num_trees <- as.integer(Sys.getenv("RF_NUM_TREES", unset = "5000"))
 dataset <- toupper(Sys.getenv("RF_DATASET", unset = "both")) # 16S | 18S | both
 min_reads <- as.integer(Sys.getenv("RF_MIN_READS", unset = "3"))
-min_samples <- as.integer(Sys.getenv("RF_MIN_SAMPLES", unset = "2")) # primary=2; sens=3
+min_samples <- as.integer(Sys.getenv("RF_MIN_SAMPLES", unset = "2"))
 top_k <- as.integer(Sys.getenv("RF_TOP_K", unset = "20"))
 out_dir <- Sys.getenv("RF_OUT_DIR", unset = "output")
 drop_samples <- strsplit(
-  Sys.getenv("RF_DROP_SAMPLES", unset = "WS_H_9"),
+  Sys.getenv("RF_DROP_SAMPLES", unset = ""),
   ",",
   fixed = TRUE
 )[[1]] |>
@@ -60,10 +58,12 @@ stopifnot(dataset %in% c("16S", "18S", "BOTH"))
 options(ranger.num.threads = num_cores)
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
+drop_label <- if (length(drop_samples)) paste(drop_samples, collapse = ",") else "none"
+
 message(sprintf(
   "RF week-9 WS | cores=%d | outer_boot=%d | trees=%d | dataset=%s | filter=>=%d reads in >=%d samples | drop=%s | top_k=%d | no outer CV",
   num_cores, n_boot, num_trees, dataset, min_reads, min_samples,
-  paste(drop_samples, collapse = ","), top_k
+  drop_label, top_k
 ))
 
 # --- prep ---
@@ -72,8 +72,10 @@ subset_week9_ws_rf <- function(phy, drop = drop_samples) {
     phyloseq::subset_samples(as.character(Date) == "9") %>%
     phyloseq::subset_samples(as.character(Location) == "WS") %>%
     phyloseq::subset_samples(!is.na(particles_total_d20))
-  keep <- setdiff(phyloseq::sample_names(phy), drop)
-  phy <- phyloseq::prune_samples(keep, phy)
+  if (length(drop)) {
+    keep <- setdiff(phyloseq::sample_names(phy), drop)
+    phy <- phyloseq::prune_samples(keep, phy)
+  }
   if (phyloseq::nsamples(phy) < 3L) {
     stop("Too few samples after exclusion: ", phyloseq::nsamples(phy))
   }
@@ -172,7 +174,7 @@ drop_near_zero_var <- function(X, freq_cut = 95 / 5, unique_cut = 10) {
   X[, !drop, drop = FALSE]
 }
 
-TRANSFORM_IDS <- c("clr_1", "clr_0.5", "clr_0.1", "rclr", "rclr_optspace")
+TRANSFORM_IDS <- c("clr_1", "clr_0.1", "rclr", "rclr_optspace")
 
 rf_importance_one <- function(
     phy,
@@ -348,7 +350,7 @@ run_marker <- function(phy, label) {
     "%s RF subset: n_samples=%d | taxa %d -> %d (filter >=%d reads in >=%d samples, prevalence=%.1f%%) | dropped=%s",
     label, filt$n_samples, filt$n_taxa_before, filt$n_taxa_after,
     filt$min_reads, filt$min_samples, 100 * filt$prevalence,
-    paste(drop_samples, collapse = ",")
+    drop_label
   ))
   sd <- as(phyloseq::sample_data(phy_f), "data.frame")
   print(sd[, c("plastic_level", "particles_total_d20"), drop = FALSE])

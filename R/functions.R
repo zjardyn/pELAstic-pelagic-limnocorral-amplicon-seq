@@ -110,6 +110,7 @@ plot_ord_points <- function(
     ylab = NULL,
     caption = NULL,
     point_size = 5,
+    sample_label = NULL,
     taxa = NULL,
     taxa_size = 2.6,
     taxa_colour = "grey25"
@@ -135,6 +136,21 @@ plot_ord_points <- function(
         labs(tag = tag, x = xlab, y = ylab, caption = caption) +
         ggtitle(title) +
         plastic_theme
+
+    if (!is.null(sample_label)) {
+        p <- p +
+            ggrepel::geom_text_repel(
+                aes(label = .data[[sample_label]]),
+                size = 3.8,
+                fontface = "bold",
+                max.overlaps = Inf,
+                min.segment.length = 0,
+                box.padding = 0.3,
+                point.padding = 0.25,
+                segment.colour = "grey50",
+                show.legend = FALSE
+            )
+    }
 
     if (!is.null(taxa) && nrow(taxa) > 0) {
         p <- p +
@@ -415,6 +431,73 @@ permanova_meta_aligned <- function(d, phy) {
         arrange(match(Sample, sample_ids))
     stopifnot(identical(meta$Sample, as.character(sample_ids)))
     meta
+}
+
+format_perm_p <- function(res, term) {
+    p <- tryCatch(res[term, "Pr(>F)"], error = function(e) NA_real_)
+    if (length(p) == 0 || is.na(p)) {
+        return("NA")
+    }
+    if (p < 0.001) {
+        return("< 0.001")
+    }
+    as.character(round(p, 3))
+}
+
+permanova_time_site <- function(d, phy, permutations = 9999L, seed = 1L) {
+    meta <- permanova_meta_aligned(d, phy)
+    set.seed(seed)
+    vegan::adonis2(
+        d ~ Location + Date,
+        data = as.data.frame(meta),
+        permutations = permutations,
+        by = "terms"
+    )
+}
+
+permanova_plastic <- function(d, phy, permutations = 9999L, seed = 2L) {
+    meta <- permanova_meta_aligned(d, phy)
+    set.seed(seed)
+    vegan::adonis2(
+        d ~ plastic_level,
+        data = as.data.frame(meta),
+        permutations = permutations,
+        by = "terms"
+    )
+}
+
+permanova_time_site_plastic <- function(d, phy, permutations = 9999L, seed = 1L) {
+    meta <- permanova_meta_aligned(d, phy)
+    set.seed(seed)
+    vegan::adonis2(
+        d ~ Location + Date + plastic_level,
+        data = as.data.frame(meta),
+        permutations = permutations,
+        by = "terms"
+    )
+}
+
+caption_time_site <- function(res_ts) {
+    glue(
+        "PERMANOVA p: site = {format_perm_p(res_ts, 'Location')}, time = {format_perm_p(res_ts, 'Date')}"
+    )
+}
+
+caption_plastic <- function(res_pl) {
+    glue("PERMANOVA plastic p = {format_perm_p(res_pl, 'plastic_level')}")
+}
+
+caption_plastic_w9 <- function(res_pl) {
+    glue("Week-9 WS; PERMANOVA plastic p = {format_perm_p(res_pl, 'plastic_level')}")
+}
+
+format_permanova <- function(res, label) {
+    df <- as.data.frame(res) %>%
+        tibble::rownames_to_column("term") %>%
+        as_tibble()
+    message("\n=== PERMANOVA: ", label, " ===")
+    print(res)
+    df
 }
 
 pca_plot0 <- function(phy, colour = NULL, shape = NULL, r2_cutoff = 0.02, tax_level = "Genus", transform = "clr", title = "PCA", point_size = 4, italics = TRUE, tax_lab_size = 3, highlight_samples = NULL, show_vectors = TRUE, time_site_ellipses = FALSE) {
