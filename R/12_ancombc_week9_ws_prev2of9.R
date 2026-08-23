@@ -19,6 +19,9 @@ suppressPackageStartupMessages({
   library(dplyr)
 })
 
+# ANCOMBC 2.10.1 bugfix: trend + pseudo_sens with global=FALSE collapses
+# ss_3d_global to 1D → apply MARGIN error. Keep sensitivity analysis on.
+source("R/patch_ancombc2_ss_global.R")
 source("R/01_load_files2.R")
 
 num_cores <- as.integer(Sys.getenv("ANCOMBC_N_CL", unset = "40"))
@@ -113,6 +116,10 @@ trend_control <- list(
 )
 
 run_ancombc2 <- function(phy, do_global = FALSE, do_trend = FALSE) {
+  # Match R/08_ancombc_stability.R: when trend=TRUE, also run global on the
+  # main fit. ANCOMBC trend sensitivity reuses global q-values (ss_tab_global
+  # → ss_tab_trend); without res_main$res_global, ss_3d_global dim-drops.
+  # patch_ancombc2_ss_global.R also guards this if global stays FALSE.
   ANCOMBC::ancombc2(
     data = phy,
     tax_level = tax_level,
@@ -129,7 +136,7 @@ run_ancombc2 <- function(phy, do_global = FALSE, do_trend = FALSE) {
     alpha = 0.05,
     n_cl = num_cores,
     verbose = TRUE,
-    global = isTRUE(do_global),
+    global = isTRUE(do_global) || isTRUE(do_trend),
     pairwise = FALSE,
     dunnet = FALSE,
     trend = isTRUE(do_trend),

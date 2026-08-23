@@ -1,4 +1,4 @@
-# Random forests (week-9 wall strip) — ASV-level transform + bootstrap importance.
+# Random forests (week-9 wall strip) — ASV-level transform + LOOCV regression.
 #
 # Load: R/01_load_files2.R (no full-table tax_filter)
 # Samples: Date == 9, Location == WS; keep all 9 (including WS_H_9)
@@ -6,20 +6,20 @@
 # Response: log1p(particles_total_d20)
 # Features: ASVs (not genus-aggregated)
 #
-# Robustness design:
-#   - No outer CV (no 5-fold / LOOCV)
-#   - Fixed RF params (mtry = floor(sqrt(p)), min.node.size = 5)
-#   - 1000 outer bootstrap resamples of the 9 samples (sample composition)
-#   - ranger permutation importance within each bootstrap fit
-#   - OOB error recorded as a descriptive diagnostic only
-#   - Transform grid measures zero-handling sensitivity (not the main robustness test)
+# Design:
+#   - Outer leave-one-out CV (n folds = n samples) for prediction error
+#   - Fixed RF params (mtry = floor(sqrt(p)), min.node.size = 5, ntree = 5000)
+#   - Primary metrics: LOO RMSE / MAE / R² (regression)
+#   - Importance: ranger permutation from full n fit (primary);
+#     LOO-fold importance summarized as secondary (sd / topk_freq)
+#   - Transform grid measures zero-handling sensitivity
 #
 # Transform grid:
-#   clr_1, clr_0.1  — vegan CLR with QUBS-matched pseudocounts
+#   clr_0.1, clr_0.5, clr_1  — vegan CLR with QUBS-matched pseudocounts
 #   rclr                     — vegan rCLR without matrix completion (impute=FALSE)
 #   rclr_optspace            — vegan rCLR with optspace completion (impute=TRUE)
 #
-# Per transform: mean importance ± SD, topk_freq across bootstraps
+# Per transform: full-fit importance; LOO error metrics; topk_freq across LOO folds
 # Across transforms: n_transforms_in_topk (not only strict intersection)
 #
 # Server:
@@ -39,7 +39,6 @@ source("R/01_load_files2.R")
 
 # --- runtime knobs ---
 num_cores <- as.integer(Sys.getenv("RF_N_CL", unset = "40"))
-n_boot <- as.integer(Sys.getenv("RF_N_BOOT", unset = Sys.getenv("RF_N_RUNS", unset = "1000")))
 num_trees <- as.integer(Sys.getenv("RF_NUM_TREES", unset = "5000"))
 dataset <- toupper(Sys.getenv("RF_DATASET", unset = "both")) # 16S | 18S | both
 min_reads <- as.integer(Sys.getenv("RF_MIN_READS", unset = "3"))
@@ -61,8 +60,8 @@ dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 drop_label <- if (length(drop_samples)) paste(drop_samples, collapse = ",") else "none"
 
 message(sprintf(
-  "RF week-9 WS | cores=%d | outer_boot=%d | trees=%d | dataset=%s | filter=>=%d reads in >=%d samples | drop=%s | top_k=%d | no outer CV",
-  num_cores, n_boot, num_trees, dataset, min_reads, min_samples,
+  "RF week-9 WS | cores=%d | trees=%d | dataset=%s | filter=>=%d reads in >=%d samples | drop=%s | top_k=%d | outer=LOOCV",
+  num_cores, num_trees, dataset, min_reads, min_samples,
   drop_label, top_k
 ))
 
@@ -174,12 +173,24 @@ drop_near_zero_var <- function(X, freq_cut = 95 / 5, unique_cut = 10) {
   X[, !drop, drop = FALSE]
 }
 
-TRANSFORM_IDS <- c("clr_1", "clr_0.1", "rclr", "rclr_optspace")
+TRANSFORM_IDS <- c("clr_0.1", "clr_0.5", "clr_1", "rclr", "rclr_optspace")
+
+loo_regression_metrics <- function(y_obs, y_pred) {
+  err <- as.numeric(y_obs) - as.numeric(y_pred)
+  ss_res <- sum(err^2, na.rm = TRUE)
+  y_obs <- as.numeric(y_obs)
+  ss_tot <- sum((y_obs - mean(y_obs, na.rm = TRUE))^2, na.rm = TRUE)
+  tibble::tibble(
+    n = length(y_obs),
+    rmse = sqrt(mean(err^2, na.rm = TRUE)),
+    mae = mean(abs(err), na.rm = TRUE),
+    r2 = if (ss_tot > 0) 1 - ss_res / ss_tot else NA_real_
+  )
+}
 
 rf_importance_one <- function(
     phy,
     transform,
-    n_boot = 1000L,
     num_trees = 5000L,
     min_node_size = 5L,
     top_k = 20L,
@@ -192,8 +203,10 @@ rf_importance_one <- function(
     stop("Fewer than 2 taxa remain after transform/NZV for ", transform)
   }
 
-  samp_df <- as.data.frame(phyloseq::sample_data(phy))
-  Y <- log1p(as.numeric(samp_df[rownames(X), "particles_total_d20"]))
+  # Use $ / drop=FALSE — samp_df[i, "col"] can be a 1-col list/data.frame
+  # (phyloseq sample_data), and as.numeric() then errors with list coercion.
+  samp_df <- as(phyloseq::sample_data(phy), "data.frame")
+  Y <- log1p(as.numeric(samp_df[rownames(X), , drop = FALSE]$particles_total_d20))
   names(Y) <- rownames(X)
   if (any(!is.finite(Y))) {
     stop("Non-finite response values for transform ", transform)
@@ -206,36 +219,29 @@ rf_importance_one <- function(
 
   if (isTRUE(verbose)) {
     message(sprintf(
-      "  transform=%s | n=%d | p=%d | outer_boot=%d | trees=%d | mtry=%d (fixed)",
-      transform, n, p, n_boot, num_trees, mtry
+      "  transform=%s | n=%d | p=%d | LOOCV folds=%d | trees=%d | mtry=%d (fixed)",
+      transform, n, p, n, num_trees, mtry
     ))
   }
 
-  # Shared bootstrap index matrix (reproducible across transforms if seed set upstream)
-  boot_idx <- matrix(NA_integer_, nrow = n_boot, ncol = n)
-  for (b in seq_len(n_boot)) {
-    set.seed(100000L + b)
-    boot_idx[b, ] <- sample.int(n, size = n, replace = TRUE)
-  }
+  # --- LOOCV: primary prediction error ---
+  loo_preds <- vector("list", n)
+  loo_imps <- vector("list", n)
 
-  imps <- vector("list", n_boot)
-  oob_diag <- vector("list", n_boot)
-
-  for (b in seq_len(n_boot)) {
-    if (isTRUE(verbose) && (b == 1L || b %% 50L == 0L || b == n_boot)) {
-      message(sprintf("  bootstrap %d/%d", b, n_boot))
+  for (i in seq_len(n)) {
+    if (isTRUE(verbose)) {
+      message(sprintf("  LOO fold %d/%d (%s)", i, n, sample_ids[i]))
     }
-    idx <- boot_idx[b, ]
-    Xb <- X[idx, , drop = FALSE]
-    Yb <- Y[idx]
-    # Unique rownames for ranger when outer bootstrap duplicates samples
-    rownames(Xb) <- make.unique(sample_ids[idx], sep = "__b")
+    train_idx <- setdiff(seq_len(n), i)
+    X_train <- X[train_idx, , drop = FALSE]
+    Y_train <- Y[train_idx]
+    X_test <- X[i, , drop = FALSE]
 
-    dat <- data.frame(y = Yb, Xb, check.names = FALSE)
-    set.seed(200000L + b)
-    fit <- ranger::ranger(
+    dat_train <- data.frame(y = Y_train, X_train, check.names = FALSE)
+    set.seed(200000L + i)
+    fit_loo <- ranger::ranger(
       dependent.variable.name = "y",
-      data = dat,
+      data = dat_train,
       num.trees = num_trees,
       mtry = mtry,
       min.node.size = min_node_size,
@@ -243,40 +249,70 @@ rf_importance_one <- function(
       replace = TRUE,
       sample.fraction = 1,
       num.threads = num_cores,
-      seed = 200000L + b,
+      seed = 200000L + i,
       verbose = FALSE
     )
 
-    vi <- fit$variable.importance
-    imps[[b]] <- tibble::tibble(
+    y_hat <- as.numeric(
+      predict(fit_loo, data = data.frame(X_test, check.names = FALSE))$predictions
+    )
+    loo_preds[[i]] <- tibble::tibble(
+      fold = i,
+      sample_id = sample_ids[i],
+      y_obs = Y[i],
+      y_pred = y_hat
+    )
+
+    vi <- fit_loo$variable.importance
+    loo_imps[[i]] <- tibble::tibble(
       asv = names(vi),
       Overall = as.numeric(vi),
-      boot = b
-    )
-    oob_diag[[b]] <- tibble::tibble(
-      boot = b,
-      oob_mse = fit$prediction.error,
-      oob_r2 = fit$r.squared
+      fold = i
     )
   }
 
-  imp_df <- dplyr::bind_rows(imps) %>%
-    dplyr::group_by(boot) %>%
+  pred_df <- dplyr::bind_rows(loo_preds)
+  loo_metrics <- loo_regression_metrics(pred_df$y_obs, pred_df$y_pred)
+
+  loo_imp_df <- dplyr::bind_rows(loo_imps) %>%
+    dplyr::group_by(fold) %>%
     dplyr::mutate(rank = dplyr::dense_rank(dplyr::desc(Overall))) %>%
     dplyr::ungroup()
 
-  oob_df <- dplyr::bind_rows(oob_diag)
-
-  agg <- imp_df %>%
+  loo_imp_agg <- loo_imp_df %>%
     dplyr::group_by(asv) %>%
     dplyr::summarise(
-      mean_importance = mean(Overall, na.rm = TRUE),
+      mean_loo_importance = mean(Overall, na.rm = TRUE),
       sd_importance = stats::sd(Overall, na.rm = TRUE),
       iqr_importance = stats::IQR(Overall, na.rm = TRUE),
       topk_freq = mean(rank <= top_k, na.rm = TRUE),
       .groups = "drop"
-    ) %>%
-    dplyr::arrange(dplyr::desc(mean_importance))
+    )
+
+  # --- Full n fit: primary importance ---
+  if (isTRUE(verbose)) {
+    message(sprintf("  full-n fit (n=%d) for importance", n))
+  }
+  dat_full <- data.frame(y = Y, X, check.names = FALSE)
+  set.seed(300000L)
+  fit_full <- ranger::ranger(
+    dependent.variable.name = "y",
+    data = dat_full,
+    num.trees = num_trees,
+    mtry = mtry,
+    min.node.size = min_node_size,
+    importance = "permutation",
+    replace = TRUE,
+    sample.fraction = 1,
+    num.threads = num_cores,
+    seed = 300000L,
+    verbose = FALSE
+  )
+  vi_full <- fit_full$variable.importance
+  full_imp <- tibble::tibble(
+    asv = names(vi_full),
+    mean_importance = as.numeric(vi_full)
+  )
 
   tax <- as.data.frame(phyloseq::tax_table(phy)) %>%
     tibble::rownames_to_column("asv")
@@ -286,7 +322,8 @@ rf_importance_one <- function(
 
   out <- tax %>%
     dplyr::select(asv, Genus) %>%
-    dplyr::inner_join(agg, by = "asv") %>%
+    dplyr::inner_join(full_imp, by = "asv") %>%
+    dplyr::left_join(loo_imp_agg, by = "asv") %>%
     dplyr::arrange(dplyr::desc(mean_importance))
 
   list(
@@ -295,20 +332,19 @@ rf_importance_one <- function(
     n_taxa = p,
     mtry = mtry,
     top_k = top_k,
-    n_boot = n_boot,
+    n_loo_folds = n,
     importance = out,
-    boot_level = imp_df,
-    oob_diagnostic = oob_df,
-    oob_summary = tibble::tibble(
-      mean_oob_mse = mean(oob_df$oob_mse, na.rm = TRUE),
-      sd_oob_mse = stats::sd(oob_df$oob_mse, na.rm = TRUE),
-      mean_oob_r2 = mean(oob_df$oob_r2, na.rm = TRUE),
-      sd_oob_r2 = stats::sd(oob_df$oob_r2, na.rm = TRUE)
+    loo_predictions = pred_df,
+    loo_metrics = loo_metrics,
+    loo_importance_level = loo_imp_df,
+    full_fit_oob = tibble::tibble(
+      oob_mse = fit_full$prediction.error,
+      oob_r2 = fit_full$r.squared
     )
   )
 }
 
-# Count how many transforms place each ASV in the top-K (by mean importance)
+# Count how many transforms place each ASV in the top-K (by full-n importance)
 transform_topk_membership <- function(result_list, top_k = 20L) {
   sets <- lapply(result_list, function(res) {
     head(res$importance$asv, top_k)
@@ -368,7 +404,6 @@ run_marker <- function(phy, label) {
     res <- rf_importance_one(
       phy_f,
       transform = tr,
-      n_boot = n_boot,
       num_trees = num_trees,
       top_k = top_k,
       verbose = TRUE
@@ -382,13 +417,13 @@ run_marker <- function(phy, label) {
         drop_samples = drop_samples,
         transform = tr,
         design = list(
-          outer = "bootstrap_samples",
-          n_boot = n_boot,
+          outer = "LOOCV",
+          n_loo_folds = res$n_loo_folds,
           num_trees = num_trees,
           mtry = res$mtry,
-          outer_cv = "none",
-          importance = "ranger_permutation",
-          oob = "diagnostic_only"
+          importance = "ranger_permutation_full_n",
+          importance_secondary = "ranger_permutation_across_LOO_folds",
+          primary_metrics = c("loo_rmse", "loo_mae", "loo_r2")
         ),
         result = res
       ),
@@ -396,8 +431,8 @@ run_marker <- function(phy, label) {
     )
     message("Wrote ", normalizePath(path_i, winslash = "/", mustWork = FALSE))
     message(sprintf(
-      "  OOB diagnostic: mean R2=%.3f (SD=%.3f); mean MSE=%.4f",
-      res$oob_summary$mean_oob_r2, res$oob_summary$sd_oob_r2, res$oob_summary$mean_oob_mse
+      "  LOO metrics: RMSE=%.4f | MAE=%.4f | R2=%.3f",
+      res$loo_metrics$rmse, res$loo_metrics$mae, res$loo_metrics$r2
     ))
   }
 
@@ -418,7 +453,8 @@ run_marker <- function(phy, label) {
       drop_samples = drop_samples,
       transforms = TRANSFORM_IDS,
       top_k = top_k,
-      n_boot = n_boot,
+      n_loo_folds = results[[1]]$n_loo_folds,
+      loo_metrics_by_transform = lapply(results, `[[`, "loo_metrics"),
       transform_sensitivity = sens,
       membership_table = memb_tbl,
       per_transform_paths = file.path(out_dir, sprintf("rf_%s_%s.rds", tag, TRANSFORM_IDS))
@@ -432,7 +468,10 @@ run_marker <- function(phy, label) {
   message("Wrote ", normalizePath(summary_path, winslash = "/", mustWork = FALSE))
   print(
     memb_tbl %>%
-      dplyr::select(asv, Genus, n_transforms_in_topk, mean_importance, sd_importance, topk_freq, transforms_in_topk),
+      dplyr::select(
+        asv, Genus, n_transforms_in_topk, mean_importance,
+        sd_importance, topk_freq, transforms_in_topk
+      ),
     n = 50
   )
 
