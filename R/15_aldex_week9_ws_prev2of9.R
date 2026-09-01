@@ -1,15 +1,14 @@
-# ALDEx2 on week-9 wall-strip samples (ASV or Genus).
+# ALDEx2 on week-9 wall-strip samples (Genus or ASV).
 #
 # Load: R/01_load_files2.R (no full-table tax_filter)
 # Samples: week-9 WS, all 9 primary (keep WS_H_9)
-# Prevalence:
-#   ASV (default): ASV >=3 reads in >=2/9
-#   Genus: tax_glom to Genus FIRST, then genus >=3 reads in >=2/9
+# Prevalence (matches ANCOMBC / RF prev2of9):
+#   Genus (default): tax_glom to Genus FIRST, then >=3 reads in >=2/9
+#   ASV: ASV >=3 reads in >=2/9
 #
-# Primary bridge (parallel Spearman correlation arms, shared taxon universe):
-#   A) Nominal loading: log1p(plastic_concentration)
-#   B) Measured retention: log1p(particles_total_d20)
-# Secondary: four-level plastic_level KW (low power at n=9)
+# Primary bridge (shared genus universe after aggregate + filter):
+#   A) Plastic loading: plastic_level (none / low / medium / high) — aldex.kw
+#   B) MP retention: particles_total_d20 — aldex.corr (+ kw secondary)
 #
 # Binary (optional): retention high (top 2 by particles_total_d20) vs rest (7)
 #   — aldex.ttest (Wilcoxon / Welch) + aldex.effect; suffix _binary_high2
@@ -19,7 +18,7 @@
 # Server:
 #   Rscript R/15_aldex_week9_ws_prev2of9.R
 #   ALDEX_MC_SAMPLES=128 ALDEX_DATASET=both Rscript R/15_aldex_week9_ws_prev2of9.R
-#   ALDEX_TAX_LEVEL=Genus ALDEX_DATASET=both Rscript R/15_aldex_week9_ws_prev2of9.R
+#   ALDEX_TAX_LEVEL=ASV ALDEX_DATASET=both Rscript R/15_aldex_week9_ws_prev2of9.R
 #   ALDEX_RUN_RETENTION_NO_H=0 Rscript R/15_aldex_week9_ws_prev2of9.R  # skip H sensitivity
 #   ALDEX_RUN_BINARY_HIGH2=0 Rscript R/15_aldex_week9_ws_prev2of9.R     # skip binary arm
 
@@ -41,7 +40,7 @@ retention_drop <- trimws(Sys.getenv("ALDEX_RETENTION_DROP", unset = "WS_H_9"))
 run_retention_no_h <- !identical(Sys.getenv("ALDEX_RUN_RETENTION_NO_H", unset = "1"), "0")
 run_binary_high2 <- !identical(Sys.getenv("ALDEX_RUN_BINARY_HIGH2", unset = "1"), "0")
 binary_top_n <- as.integer(Sys.getenv("ALDEX_BINARY_TOP_N", unset = "2"))
-tax_level_raw <- trimws(Sys.getenv("ALDEX_TAX_LEVEL", unset = "ASV"))
+tax_level_raw <- trimws(Sys.getenv("ALDEX_TAX_LEVEL", unset = "Genus"))
 tax_level <- ifelse(
   toupper(tax_level_raw) %in% c("GENUS", "G"),
   "Genus",
@@ -146,11 +145,9 @@ prep_counts <- function(phy, label) {
   )
 }
 
-run_aldex_arm <- function(counts, sample_ids, conds, cont_var, arm_label) {
+aldex_clr <- function(counts, sample_ids, conds) {
   counts <- counts[, sample_ids, drop = FALSE]
   conds <- unname(conds[sample_ids])
-  cont_var <- unname(cont_var[sample_ids])
-
   set.seed(2026L)
   clr <- ALDEx2::aldex.clr(
     counts,
@@ -160,16 +157,38 @@ run_aldex_arm <- function(counts, sample_ids, conds, cont_var, arm_label) {
     gamma = NULL,
     verbose = FALSE
   )
-  corr <- ALDEx2::aldex.corr(clr, cont.var = cont_var)
-  kw <- ALDEx2::aldex.kw(clr)
+  list(clr = clr, conditions = conds)
+}
+
+run_aldex_kw_arm <- function(counts, sample_ids, conds, arm_label) {
+  prep <- aldex_clr(counts, sample_ids, conds)
+  kw <- ALDEx2::aldex.kw(prep$clr)
+
+  list(
+    arm = arm_label,
+    sample_ids = sample_ids,
+    n_samples = length(sample_ids),
+    continuous = NULL,
+    conditions = prep$conditions,
+    clr = prep$clr,
+    correlation = NULL,
+    kw = kw
+  )
+}
+
+run_aldex_corr_arm <- function(counts, sample_ids, conds, cont_var, arm_label) {
+  prep <- aldex_clr(counts, sample_ids, conds)
+  cont_var <- unname(cont_var[sample_ids])
+  corr <- ALDEx2::aldex.corr(prep$clr, cont.var = cont_var)
+  kw <- ALDEx2::aldex.kw(prep$clr)
 
   list(
     arm = arm_label,
     sample_ids = sample_ids,
     n_samples = length(sample_ids),
     continuous = cont_var,
-    conditions = conds,
-    clr = clr,
+    conditions = prep$conditions,
+    clr = prep$clr,
     correlation = corr,
     kw = kw
   )
@@ -245,9 +264,12 @@ save_arm_tables <- function(arm_obj, tax_annot, tag, arm_suffix) {
     "spearman.erho", "spearman.ep", "spearman.eBH",
     "pearson.ecor", "pearson.ep", "pearson.eBH"
   )
-  corr_tbl <- arm_obj$correlation %>%
-    tibble::rownames_to_column("asv") %>%
-    dplyr::left_join(tax_annot, by = "asv")
+  corr_tbl <- NULL
+  if (!is.null(arm_obj$correlation)) {
+    corr_tbl <- arm_obj$correlation %>%
+      tibble::rownames_to_column("asv") %>%
+      dplyr::left_join(tax_annot, by = "asv")
+  }
 
   kw_cols <- intersect(c("kw.ep", "kw.eBH", "glm.ep", "glm.eBH"), names(arm_obj$kw))
   kw_tbl <- arm_obj$kw %>%
@@ -275,7 +297,11 @@ save_arm_tables <- function(arm_obj, tax_annot, tag, arm_suffix) {
 
   list(
     path = out_path,
-    correlation = corr_tbl %>% dplyr::select(asv, Genus, dplyr::any_of(corr_cols)),
+    correlation = if (!is.null(corr_tbl)) {
+      corr_tbl %>% dplyr::select(asv, Genus, dplyr::any_of(corr_cols))
+    } else {
+      NULL
+    },
     kw = kw_tbl %>% dplyr::select(asv, Genus, dplyr::any_of(kw_cols))
   )
 }
@@ -356,23 +382,24 @@ run_marker <- function(phy, label) {
   tax_annot <- annotate_taxa(rownames(x9f), prep$phy)
 
   conds <- setNames(as.character(sd[all_ids, "plastic_level"]), all_ids)
-  nominal <- setNames(log1p(as.numeric(sd[all_ids, "plastic_concentration"])), all_ids)
-  retention <- setNames(log1p(as.numeric(sd[all_ids, "particles_total_d20"])), all_ids)
-  retention_raw <- setNames(as.numeric(sd[all_ids, "particles_total_d20"]), all_ids)
+  mp_retention <- setNames(as.numeric(sd[all_ids, "particles_total_d20"]), all_ids)
+  if (anyNA(mp_retention)) {
+    stop(label, ": NA in particles_total_d20 for week-9 WS samples")
+  }
 
-  message(sprintf("=== %s loading (nominal) n=%d tax=%s ===", label, length(all_ids), tax_level))
-  arm_loading <- run_aldex_arm(
-    x9f, all_ids, conds, nominal,
-    arm_label = "nominal_loading_log1p_plastic_concentration"
+  message(sprintf("=== %s plastic_level (KW) n=%d tax=%s ===", label, length(all_ids), tax_level))
+  arm_loading <- run_aldex_kw_arm(
+    x9f, all_ids, conds,
+    arm_label = "plastic_level_kw"
   )
-  out_loading <- save_arm_tables(arm_loading, tax_annot, tag, "loading_corr_kw")
+  out_loading <- save_arm_tables(arm_loading, tax_annot, tag, "plastic_level_kw")
 
-  message(sprintf("=== %s retention (measured) n=%d tax=%s ===", label, length(all_ids), tax_level))
-  arm_retention <- run_aldex_arm(
-    x9f, all_ids, conds, retention,
-    arm_label = "measured_retention_log1p_particles_total_d20"
+  message(sprintf("=== %s MP retention (particles_total_d20) n=%d tax=%s ===", label, length(all_ids), tax_level))
+  arm_retention <- run_aldex_corr_arm(
+    x9f, all_ids, conds, mp_retention,
+    arm_label = "mp_retention_particles_total_d20"
   )
-  out_retention <- save_arm_tables(arm_retention, tax_annot, tag, "retention_corr_kw")
+  out_retention <- save_arm_tables(arm_retention, tax_annot, tag, "mp_retention_corr_kw")
 
   out_sens <- NULL
   if (isTRUE(run_retention_no_h) && nzchar(retention_drop)) {
@@ -384,20 +411,20 @@ run_marker <- function(phy, label) {
         "=== %s retention sensitivity (drop %s) n=%d tax=%s ===",
         label, retention_drop, length(keep_ids), tax_level
       ))
-      arm_sens <- run_aldex_arm(
-        x9f, keep_ids, conds, retention,
-        arm_label = paste0("retention_sensitivity_drop_", retention_drop)
+      arm_sens <- run_aldex_corr_arm(
+        x9f, keep_ids, conds, mp_retention,
+        arm_label = paste0("mp_retention_sensitivity_drop_", retention_drop)
       )
       out_sens <- save_arm_tables(
         arm_sens, tax_annot, tag,
-        sprintf("retention_corr_kw_no_%s", gsub("[^A-Za-z0-9]+", "_", retention_drop))
+        sprintf("mp_retention_corr_kw_no_%s", gsub("[^A-Za-z0-9]+", "_", retention_drop))
       )
     }
   }
 
   out_binary <- NULL
   if (isTRUE(run_binary_high2)) {
-    bin <- assign_binary_retention(all_ids, retention_raw, top_n = binary_top_n)
+    bin <- assign_binary_retention(all_ids, mp_retention, top_n = binary_top_n)
     message(sprintf(
       "=== %s retention binary high%d vs rest | high=%s (cut=%.4g) | rest n=%d | tax=%s ===",
       label, binary_top_n,
@@ -427,11 +454,21 @@ run_marker <- function(phy, label) {
       tax_level = tax_level,
       filter = prep$filter,
       tag = tag,
+      outcomes = list(
+        plastic_level = list(
+          variable = "plastic_level",
+          levels = sort(unique(conds))
+        ),
+        mp_retention = list(
+          variable = "particles_total_d20",
+          values = mp_retention
+        )
+      ),
       arms = list(
-        loading = out_loading,
-        retention = out_retention,
-        retention_sensitivity = out_sens,
-        retention_binary_high2 = out_binary
+        plastic_level = out_loading,
+        mp_retention = out_retention,
+        mp_retention_sensitivity = out_sens,
+        mp_retention_binary_high2 = out_binary
       ),
       key_columns = list(
         correlation = c("spearman.erho", "spearman.ep", "spearman.eBH"),
@@ -445,10 +482,10 @@ run_marker <- function(phy, label) {
   message("Wrote ", normalizePath(summary_path, winslash = "/", mustWork = FALSE))
 
   invisible(list(
-    loading = out_loading,
-    retention = out_retention,
-    retention_sensitivity = out_sens,
-    retention_binary_high2 = out_binary
+    plastic_level = out_loading,
+    mp_retention = out_retention,
+    mp_retention_sensitivity = out_sens,
+    mp_retention_binary_high2 = out_binary
   ))
 }
 
