@@ -1,8 +1,9 @@
-# ALDEx2 GLM / sample-level figures — week-9 WS prev2of9 (ASV or Genus).
+# ALDEx2 secondary GLM / sample-level figures — week-9 WS prev2of9 (Genus or ASV).
 #
-# 1) GLM MW + MA plots per plastic_level contrast vs none (aldex.glm.plot)
+# Primary loading inference is kw.eBH from R/15 (aldex.kw). This script adds:
+# 1) Secondary GLM MW + MA plots per plastic_level contrast vs none (aldex.glm.plot)
 # 2) Sample-level posterior-median CLR by loading group (all samples, jitter)
-# 3) Retention Spearman summary + sample-level CLR vs log10(particles_total_d20)
+# 3) Retention Spearman summary (primary from R/15) + sample CLR vs log10(particles_total_d20)
 #
 # Output: figures/aldex_glm/{16S,18S}/
 #
@@ -21,7 +22,9 @@ suppressPackageStartupMessages({
 
 source("R/01_load_files2.R")
 
-mc_samples <- as.integer(Sys.getenv("ALDEX_MC_SAMPLES", unset = "128"))
+mc_samples <- as.integer(Sys.getenv("ALDEX_MC_SAMPLES", unset = "1000"))
+aldex_seed <- as.integer(Sys.getenv("ALDEX_SEED", unset = "2026"))
+use_mc <- !identical(Sys.getenv("ALDEX_USE_MC", unset = "1"), "0")
 min_reads <- as.integer(Sys.getenv("ALDEX_MIN_READS", unset = "3"))
 min_samples <- as.integer(Sys.getenv("ALDEX_MIN_SAMPLES", unset = "2"))
 tax_level_raw <- trimws(Sys.getenv("ALDEX_TAX_LEVEL", unset = "Genus"))
@@ -114,6 +117,9 @@ prep_marker <- function(phy, label) {
   if (anyNA(retention_raw)) {
     stop(label, ": NA in particles_total_d20")
   }
+  if (any(retention_raw <= 0, na.rm = TRUE)) {
+    stop(label, ": log10(particles_total_d20) requires values > 0")
+  }
   retention_log10 <- log10(retention_raw)
 
   annot <- tax_annot(phy_work, rownames(counts)) %>%
@@ -165,7 +171,7 @@ run_glm_contrast_plots <- function(x_group, group_results, group_effect, contras
   dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
   for (ct in contrasts) {
     ct_safe <- gsub("[^A-Za-z0-9]+", "_", ct)
-    pdf_path <- file.path(out_dir, sprintf("ALDEx2_%s_%s_plots.pdf", marker, ct_safe))
+    pdf_path <- file.path(out_dir, sprintf("ALDEx2_%s_%s_secondary_glm_plots.pdf", marker, ct_safe))
     grDevices::pdf(pdf_path, width = 10, height = 5)
     graphics::par(mfrow = c(1, 2))
     ALDEx2::aldex.glm.plot(
@@ -190,6 +196,7 @@ run_glm_contrast_plots <- function(x_group, group_results, group_effect, contras
 }
 
 top_glm_taxa <- function(group_results, n = 6L) {
+  # Secondary visualization only; primary loading inference uses kw.eBH from R/15.
   p_cols <- grep(":pval\\.padj$", colnames(group_results), value = TRUE)
   p_cols <- setdiff(p_cols, "(Intercept):pval.padj")
   if (!length(p_cols)) {
@@ -229,8 +236,8 @@ plot_group_clr_samples <- function(
     labs(
       x = "Loading group (plastic_level)",
       y = "Posterior median CLR abundance",
-      title = sprintf("%s | ALDEx2 %s CLR by plastic level", marker, unit_label),
-      subtitle = "All samples shown (jitter); black bar = group median"
+      title = sprintf("%s | Secondary GLM %s CLR by plastic level", marker, unit_label),
+      subtitle = "Exploratory; primary loading test is kw.eBH (aldex.kw in R/15)"
     ) +
     theme_bw(base_size = 11) +
     theme(
@@ -271,8 +278,8 @@ plot_retention_corr <- function(corr_df, marker) {
     labs(
       x = "Expected Spearman correlation",
       y = expression(-log[10]("BH-adjusted p")),
-      title = sprintf("%s | ALDEx2 %s vs MP retention", marker, unit_label),
-      subtitle = "particles_total_d20 (week-9 WS, prev2of9)"
+      title = sprintf("%s | Retention Spearman (primary) vs log10 MP", marker, unit_label),
+      subtitle = "log10(particles_total_d20) for RF consistency; Spearman ranks match raw scale"
     ) +
     theme_bw(base_size = 11) +
     theme(
@@ -334,14 +341,15 @@ run_marker <- function(phy, label) {
   out_dir <- file.path(out_root, label)
   dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
-  set.seed(2026L)
+  set.seed(aldex_seed)
   x_group <- ALDEx2::aldex.clr(
     prep$counts,
     conds = prep$group_model,
     mc.samples = mc_samples,
     denom = "all",
     gamma = NULL,
-    verbose = FALSE
+    verbose = FALSE,
+    useMC = use_mc
   )
   group_results <- ALDEx2::aldex.glm(x_group, verbose = FALSE)
   group_effect <- ALDEx2::aldex.glm.effect(
@@ -376,14 +384,14 @@ run_marker <- function(phy, label) {
   )
   save_gg(
     p_group,
-    file.path(out_dir, "sample_clr_by_plastic_level_top_glm"),
+    file.path(out_dir, "sample_clr_by_plastic_level_secondary_glm"),
     width = 11,
     height = max(7, 2.2 * ceiling(n_group_genera / 3))
   )
 
   ret_path <- file.path(
     aldex_out,
-    sprintf("aldex_%s_9_ws_prev2of9%s_mp_retention_corr_kw.rds", label, tag_suffix)
+    sprintf("aldex_%s_9_ws_prev2of9%s_retention_log10_corr.rds", label, tag_suffix)
   )
   if (!file.exists(ret_path)) {
     warning("Missing retention RDS: ", ret_path, " — run R/15 first")
@@ -434,8 +442,8 @@ run_marker <- function(phy, label) {
 }
 
 message(sprintf(
-  "ALDEx2 GLM/sample figures | tax=%s | mc.samples=%d | filter=>=%d in >=%d/9 | out=%s",
-  tax_level, mc_samples, min_reads, min_samples, out_root
+  "ALDEx2 secondary GLM/sample figures | tax=%s | mc.samples=%d | useMC=%s | filter=>=%d in >=%d/9 | out=%s",
+  tax_level, mc_samples, if (use_mc) "TRUE" else "FALSE", min_reads, min_samples, out_root
 ))
 
 run_marker(phy_16S, "16S")

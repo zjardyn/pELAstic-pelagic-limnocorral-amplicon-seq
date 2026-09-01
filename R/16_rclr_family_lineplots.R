@@ -495,7 +495,9 @@ run_marker <- function(marker, transforms, min_transforms, method, pdf_name,
     ncol = ncol_pdf, nrow = nrow_pdf
   )
 
-  pdf_path <- file.path(out_dir, pdf_name)
+  marker_dir <- file.path(out_dir, marker)
+  dir.create(marker_dir, showWarnings = FALSE, recursive = TRUE)
+  pdf_path <- file.path(marker_dir, pdf_name)
   pdf_out <- save_multipage_pdf(pages$plots, pdf_path)
 
   message(glue(

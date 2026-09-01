@@ -4,30 +4,13 @@
 source("R/01_load_files.R")
 source("R/functions.R")
 
-# MS samples are week-9 collection; treat as Date = 9 (not the load-file Date = 10 code)
-ms_as_week9 <- function(phy) {
-  phy %>%
-    ps_mutate(Date = ifelse(as.character(Location) == "MS", 9, as.numeric(as.character(Date)))) %>%
-    ps_mutate(Date = factor(Date, levels = c(3, 6, 9)))
-}
+# Week-9 wall-strip panels (C/F) — keep in sync with R/07_aitchison_nmds.R
+NMDS_SEED_W9 <- 456L
+PERMANOVA_SEED_W9 <- 3L
+
 phy_16S <- ms_as_week9(phy_16S)
 phy_18S <- ms_as_week9(phy_18S)
 message("MS samples coded as Date = 9 (same time as week-9 WS)")
-
-aitchison_ordinations <- function(phy, nmds_seed = 123L) {
-  g <- genus_otu(phy, tax_level = "Genus")
-  d <- aitchison_dist(g$otu)
-  nmds <- nmds_from_dist(d, seed = nmds_seed)
-  pcoa <- pcoa_from_dist(d, k = 2L)
-  list(
-    dist = d,
-    phy = g$phy,
-    nmds_scores = ord_scores_df(nmds$points, g$phy, c("NMDS1", "NMDS2")),
-    stress = nmds$stress,
-    pcoa_scores = ord_scores_df(pcoa$points, g$phy, c("PCoA1", "PCoA2")),
-    pcoa_var = pcoa$var_explained
-  )
-}
 
 ord_16S <- aitchison_ordinations(phy_16S)
 ord_18S <- aitchison_ordinations(phy_18S)
@@ -53,24 +36,12 @@ full_18S <- permanova_time_site_plastic(ord_18S$dist, ord_18S$phy)
 dir.create("results", showWarnings = FALSE)
 
 # --- Week-9 wall-strip subset; Aitchison NMDS + plastic PERMANOVA ---
-subset_week9_ws <- function(phy, label) {
-  keep <- as.character(sample_data(phy)$Location) == "WS" &
-    as.character(sample_data(phy)$Date) == "9"
-  n_keep <- sum(keep)
-  message(label, " week-9 WS: keeping ", n_keep, " / ", nsamples(phy), " samples")
-  if (n_keep < 3L) {
-    stop(label, ": fewer than 3 week-9 wall-strip samples")
-  }
-  phy <- prune_samples(keep, phy)
-  prune_taxa(taxa_sums(phy) > 0, phy)
-}
-
 phy_16S_w9 <- subset_week9_ws(phy_16S, "16S")
 phy_18S_w9 <- subset_week9_ws(phy_18S, "18S")
-ord_16S_w9 <- aitchison_ordinations(phy_16S_w9, nmds_seed = 456L)
-ord_18S_w9 <- aitchison_ordinations(phy_18S_w9, nmds_seed = 456L)
-pl_16S_w9 <- permanova_plastic(ord_16S_w9$dist, ord_16S_w9$phy, seed = 3L)
-pl_18S_w9 <- permanova_plastic(ord_18S_w9$dist, ord_18S_w9$phy, seed = 3L)
+ord_16S_w9 <- aitchison_ordinations(phy_16S_w9, nmds_seed = NMDS_SEED_W9)
+ord_18S_w9 <- aitchison_ordinations(phy_18S_w9, nmds_seed = NMDS_SEED_W9)
+pl_16S_w9 <- permanova_plastic(ord_16S_w9$dist, ord_16S_w9$phy, seed = PERMANOVA_SEED_W9)
+pl_18S_w9 <- permanova_plastic(ord_18S_w9$dist, ord_18S_w9$phy, seed = PERMANOVA_SEED_W9)
 
 message(sprintf("16S week-9 WS Aitchison NMDS stress = %.3f", ord_16S_w9$stress))
 message(sprintf("18S week-9 WS Aitchison NMDS stress = %.3f", ord_18S_w9$stress))
@@ -112,11 +83,12 @@ p_nmds <- combine_time_plastic_w9_6panel(
     fill_labels = c("None", "Low", "Medium", "High")
   ),
   plot_ord_points(
-    ord_16S_w9$nmds_scores, x = NMDS1, y = NMDS2, colour = plastic_level,
+    add_retention_label(ord_16S_w9$nmds_scores),
+    x = NMDS1, y = NMDS2, colour = plastic_level,
     title = "16S week-9 wall strip", tag = "C",
     fill_name = "Plastic level",
     fill_labels = c("None", "Low", "Medium", "High"),
-    sample_label = "CorralLetter"
+    sample_label = "retention_label"
   ),
   plot_ord_points(
     ord_18S$nmds_scores, x = NMDS1, y = NMDS2, colour = Date,
@@ -130,11 +102,12 @@ p_nmds <- combine_time_plastic_w9_6panel(
     fill_labels = c("None", "Low", "Medium", "High")
   ),
   plot_ord_points(
-    ord_18S_w9$nmds_scores, x = NMDS1, y = NMDS2, colour = plastic_level,
+    add_retention_label(ord_18S_w9$nmds_scores),
+    x = NMDS1, y = NMDS2, colour = plastic_level,
     title = "18S week-9 wall strip", tag = "F",
     fill_name = "Plastic level",
     fill_labels = c("None", "Low", "Medium", "High"),
-    sample_label = "CorralLetter"
+    sample_label = "retention_label"
   ),
   caption_16s_time = caption_time_site(ts_16S),
   caption_16s_plastic = caption_plastic(pl_16S),
@@ -188,7 +161,90 @@ p_pcoa <- combine_time_plastic_4panel(
 )
 save_ord_pdf(p_pcoa, "figures/fig_S_aitchison_pcoa_full.pdf", width = 18 * 0.85, height = 18 * 0.85)
 
+# --- Same 2x2 PCoA with CLR-PCA native loadings on plastic panels (B, D) ---
+# Top 10 genera by max(r2_PC1, r2_PC2), same r2 definition as fig_S2_pca.
+taxa_16S <- pcoa_pca_loadings(
+  ord_16S$otu, ord_16S$pcoa_scores, n_top = 10L, arrow_scale = 0.7
+)
+taxa_18S <- pcoa_pca_loadings(
+  ord_18S$otu, ord_18S$pcoa_scores, n_top = 10L, arrow_scale = 0.7
+)
+message(sprintf(
+  "CLR-PCA loadings on PCoA (top 10 by max r2): 16S n=%d (threshold max_r2=%.4f) | 18S n=%d (threshold max_r2=%.4f)",
+  nrow(taxa_16S), min(taxa_16S$max_r2),
+  nrow(taxa_18S), min(taxa_18S$max_r2)
+))
+thresh_16S <- min(taxa_16S$max_r2)
+thresh_18S <- min(taxa_18S$max_r2)
+write_csv(
+  bind_rows(
+    taxa_16S %>% mutate(amplicon = "16S", n_top = 10L, r2_threshold = thresh_16S),
+    taxa_18S %>% mutate(amplicon = "18S", n_top = 10L, r2_threshold = thresh_18S)
+  ),
+  "results/aitchison_pcoa_pca_loadings_top10.csv"
+)
+
+p_pcoa_taxa <- combine_time_plastic_4panel(
+  plot_ord_points(
+    ord_16S$pcoa_scores, x = PCoA1, y = PCoA2, colour = Date,
+    title = "16S rRNA (Aitchison PCoA)", tag = "A",
+    fill_name = "Week",
+    xlab = glue("PCoA1 [{round(ord_16S$pcoa_var[1], 1)}%]"),
+    ylab = glue("PCoA2 [{round(ord_16S$pcoa_var[2], 1)}%]")
+  ),
+  plot_ord_points(
+    ord_16S$pcoa_scores, x = PCoA1, y = PCoA2, colour = plastic_level,
+    title = "16S rRNA (Aitchison PCoA)", tag = "B",
+    fill_name = "Plastic level",
+    fill_labels = c("None", "Low", "Medium", "High"),
+    xlab = glue("PCoA1 [{round(ord_16S$pcoa_var[1], 1)}%]"),
+    ylab = glue("PCoA2 [{round(ord_16S$pcoa_var[2], 1)}%]"),
+    taxa = taxa_16S,
+    taxa_size = 2.4
+  ),
+  plot_ord_points(
+    ord_18S$pcoa_scores, x = PCoA1, y = PCoA2, colour = Date,
+    title = "18S rRNA (Aitchison PCoA)", tag = "C",
+    fill_name = "Week",
+    xlab = glue("PCoA1 [{round(ord_18S$pcoa_var[1], 1)}%]"),
+    ylab = glue("PCoA2 [{round(ord_18S$pcoa_var[2], 1)}%]")
+  ),
+  plot_ord_points(
+    ord_18S$pcoa_scores, x = PCoA1, y = PCoA2, colour = plastic_level,
+    title = "18S rRNA (Aitchison PCoA)", tag = "D",
+    fill_name = "Plastic level",
+    fill_labels = c("None", "Low", "Medium", "High"),
+    xlab = glue("PCoA1 [{round(ord_18S$pcoa_var[1], 1)}%]"),
+    ylab = glue("PCoA2 [{round(ord_18S$pcoa_var[2], 1)}%]"),
+    taxa = taxa_18S,
+    taxa_size = 2.4
+  ),
+  caption_16s_left = caption_time_site(ts_16S),
+  caption_16s_right = paste0(
+    caption_plastic(pl_16S),
+    sprintf(
+      "; arrows: top 10 CLR-PCA loadings by max(r2_PC1, r2_PC2) (threshold = %.3f)",
+      thresh_16S
+    )
+  ),
+  caption_18s_left = caption_time_site(ts_18S),
+  caption_18s_right = paste0(
+    caption_plastic(pl_18S),
+    sprintf(
+      "; arrows: top 10 CLR-PCA loadings by max(r2_PC1, r2_PC2) (threshold = %.3f)",
+      thresh_18S
+    )
+  )
+)
+save_ord_pdf(
+  p_pcoa_taxa,
+  "figures/fig_S_aitchison_pcoa_full_taxa.pdf",
+  width = 18 * 0.85,
+  height = 18 * 0.85
+)
+
 message(
-  "Wrote figures/fig_S_aitchison_nmds_full.pdf (2x3 with week-9 WS) and ",
-  "fig_S_aitchison_pcoa_full.pdf (2x2)"
+  "Wrote figures/fig_S_aitchison_nmds_full.pdf (2x3 with week-9 WS), ",
+  "fig_S_aitchison_pcoa_full.pdf (2x2), and ",
+  "fig_S_aitchison_pcoa_full_taxa.pdf (2x2 + top-10 CLR-PCA loadings on B/D)"
 )

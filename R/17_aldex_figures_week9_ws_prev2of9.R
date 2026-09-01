@@ -1,6 +1,7 @@
 # ALDEx2 exploratory figures — week-9 WS prev2of9 (genus level).
 #
-# Outcomes: plastic_level (KW) and MP retention / particles_total_d20 (Spearman).
+# Outcomes: plastic_level (KW; primary kw.eBH) and log10(particles_total_d20) retention
+# (aldex.corr; Spearman designated primary — Pearson/Kendall also in RDS).
 # No taxa pass BH <= 0.10 at n = 9; plots show effect size and nominal evidence.
 #
 #   Rscript R/17_aldex_figures_week9_ws_prev2of9.R
@@ -39,9 +40,9 @@ label_n_volcano <- as.integer(Sys.getenv("ALDEX_FIG_LABEL_N", unset = "8"))
 arm_files <- tibble::tribble(
   ~marker, ~outcome, ~arm,
   "16S", "Plastic level", "plastic_level_kw",
-  "16S", "MP retention", "mp_retention_corr_kw",
+  "16S", "MP retention", "retention_log10_corr",
   "18S", "Plastic level", "plastic_level_kw",
-  "18S", "MP retention", "mp_retention_corr_kw"
+  "18S", "MP retention", "retention_log10_corr"
 ) %>%
   mutate(path = purrr::map2_chr(marker, arm, aldex_rds))
 
@@ -103,7 +104,7 @@ save_plot <- function(plot, stem, width, height) {
   message("Wrote ", pdf_path, " and ", png_path)
 }
 
-df <- pmap_dfr(arm_files, load_arm)
+df <- pmap_dfr(arm_files[c("path", "marker", "outcome")], load_arm)
 df_corr <- df %>% filter(arm_type == "corr")
 df_kw <- df %>% filter(arm_type == "kw")
 
@@ -153,7 +154,7 @@ make_volcano <- function(d, tag = NULL) {
       y = expression(-log[10](p)),
       color = NULL,
       title = d$panel[[1]],
-      subtitle = "particles_total_d20"
+      subtitle = expression(log[10](particles[total]~d20))
     ) +
     theme(
       plot.title = element_text(face = "bold", size = 11, hjust = 0.5),
@@ -193,7 +194,7 @@ make_top_bars <- function(d, tag = NULL) {
       y = NULL,
       fill = NULL,
       title = d$panel[[1]],
-      subtitle = "particles_total_d20"
+      subtitle = expression(log[10](particles[total]~d20))
     ) +
     theme(
       plot.title = element_text(face = "bold", size = 11, hjust = 0.5),
@@ -265,7 +266,7 @@ p_summary <- (
   plot_annotation(
     title = "ALDEx2 genus | week-9 WS, prev2of9 (n = 9)",
     subtitle = paste0(
-      "Left: plastic_level (KW). Right: MP retention Spearman (particles_total_d20). ",
+      "Left: plastic_level (KW; kw.eBH). Right: retention Spearman (designated primary) vs log10(particles_total_d20). ",
       "Dashed: nominal p = 0.05. No taxa pass BH <= 0.10."
     ),
     theme = theme(
@@ -283,7 +284,7 @@ volcano_panels <- df_corr %>%
 
 p_volcano <- wrap_plots(volcano_panels, ncol = 2, guides = "collect") +
   plot_annotation(
-    title = "ALDEx2 genus Spearman vs MP retention (week-9 WS, prev2of9)",
+    title = "ALDEx2 genus Spearman (primary) vs log10 MP retention (week-9 WS, prev2of9)",
     subtitle = "No taxa pass BH <= 0.10 (n = 9). Dashed line: nominal p = 0.05.",
     theme = theme(
       plot.title = element_text(face = "bold", size = 14, hjust = 0.5),

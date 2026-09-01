@@ -1,18 +1,25 @@
 source("R/functions.R")
+source("R/01_load_files2.R")
 
-# Global-test ANCOM-BC2 heatmap from a single run (no bootstrap aggregation).
+# Global-test ANCOM-BC2 heatmap from the dedicated global run (R/12 prev2of9).
 # Significance from res_global (raw p < 0.05); LFCs from primary pairwise res.
 # Layout: prokaryotes split halfway into two side-by-side panels; eukaryotes below.
 
 theme_set(theme_minimal())
 
-stability_data_16S <- readRDS("output/ancombc_stability_16S_9_ws_trend.rds")
-stability_data_18S <- readRDS("output/ancombc_stability_18S_9_ws_trend.rds")
+global_16S <- readRDS("output/ancombc_global_16S_9_ws_prev2of9.rds")
+global_18S <- readRDS("output/ancombc_global_18S_9_ws_prev2of9.rds")
+run_16S <- global_16S$result
+run_18S <- global_18S$result
+message("Using 16S global seed: ", global_16S$seed)
+message("Using 18S global seed: ", global_18S$seed)
 
-run_16S <- stability_data_16S[[1]]
-run_18S <- stability_data_18S[[1]]
-message("Using 16S run seed/key: ", names(stability_data_16S)[1])
-message("Using 18S run seed/key: ", names(stability_data_18S)[1])
+genus_map_16S <- genus_label_map_from_phy(phy_16S)
+genus_map_18S <- genus_label_map_from_phy(phy_18S)
+rf_gen_16S <- rf_all4_genus_labels("16S")
+rf_gen_18S <- rf_all4_genus_labels("18S")
+message("RF 4/4 genera for * mark: 16S=", length(rf_gen_16S),
+        " 18S=", length(rf_gen_18S))
 
 extract_significant_taxa_global <- function(run_result) {
   run_result$res_global %>%
@@ -68,8 +75,26 @@ to_heatmap_long <- function(sig_data) {
     )
 }
 
-heatmap_data_16S <- to_heatmap_long(sig_16S)
-heatmap_data_18S <- to_heatmap_long(sig_18S)
+heatmap_data_16S <- to_heatmap_long(sig_16S) %>%
+  mutate(
+    taxon_lab = label_ancombc_taxa(taxon, genus_map_16S),
+    taxon_display = star_rf_overlap_labels(taxon_lab, rf_gen_16S)
+  )
+heatmap_data_18S <- to_heatmap_long(sig_18S) %>%
+  mutate(
+    taxon_lab = label_ancombc_taxa(taxon, genus_map_18S),
+    taxon_display = star_rf_overlap_labels(taxon_lab, rf_gen_18S)
+  )
+message(
+  "RF* on global heatmap: 16S=",
+  n_distinct(heatmap_data_16S$taxon_lab[
+    heatmap_data_16S$taxon_lab %in% rf_gen_16S
+  ]),
+  " 18S=",
+  n_distinct(heatmap_data_18S$taxon_lab[
+    heatmap_data_18S$taxon_lab %in% rf_gen_18S
+  ])
+)
 
 # Order full prokaryote set once, then split at midpoint
 order_taxa_16S <- if (nrow(heatmap_data_16S)) {

@@ -2,7 +2,11 @@
 # Libraries required, either download or use the docker container
 library(tidyverse)
 library(microViz)
-library(bubbler)
+if (requireNamespace("bubbler", quietly = TRUE)) {
+  library(bubbler)
+} else {
+  message("Package 'bubbler' not installed; bubble plots unavailable.")
+}
 library(vegan)
 library(phyloseq)
 library(ggrepel)
@@ -13,13 +17,97 @@ library(ggtext)
 library(patchwork)
 library(indicspecies)
 library(janitor)
-library(ANCOMBC)
+if (requireNamespace("ANCOMBC", quietly = TRUE)) {
+  library(ANCOMBC)
+} else {
+  message("Package 'ANCOMBC' not installed; ANCOM-BC runners unavailable.")
+}
 library(parallel)
 library(ggside)
-library(magick)
-library(ggpp)
+if (requireNamespace("magick", quietly = TRUE)) {
+  library(magick)
+} else {
+  message("Package 'magick' not installed; image helpers unavailable.")
+}
+if (requireNamespace("ggpp", quietly = TRUE)) {
+  library(ggpp)
+} else {
+  message("Package 'ggpp' not installed; ggpp helpers unavailable.")
+}
 library(tidyr)
 library(scales)
+
+# Map tax_glom hash taxa_names → Genus labels (matches R/12 week-9 WS prep).
+# Genus already carries tax_fix fallbacks like "Ilumatobacteraceae Family".
+genus_label_map_from_phy <- function(phy) {
+  phy_sub <- phy %>%
+    phyloseq::subset_samples(as.character(Date) == "9") %>%
+    phyloseq::subset_samples(as.character(Location) == "WS")
+  phy_g <- phyloseq::tax_glom(phy_sub, taxrank = "Genus", NArm = FALSE)
+  tt <- as.data.frame(as(phyloseq::tax_table(phy_g), "matrix"))
+  labs <- as.character(tt$Genus)
+  names(labs) <- phyloseq::taxa_names(phy_g)
+  labs
+}
+
+label_ancombc_taxa <- function(taxon_ids, label_map) {
+  labs <- unname(label_map[as.character(taxon_ids)])
+  ifelse(is.na(labs) | !nzchar(labs), as.character(taxon_ids), labs)
+}
+
+# Genus labels for ASVs with LOO mean importance > thresh in all 4 of
+# clr_0.1, clr_0.5, clr_1, rclr (excludes rclr_optspace).
+rf_all4_genus_labels <- function(
+    marker,
+    rf_dir = "output",
+    imp_thresh = 0.001
+) {
+  transforms <- c("clr_0.1", "clr_0.5", "clr_1", "rclr")
+  long <- dplyr::bind_rows(lapply(transforms, function(tr) {
+    path <- file.path(
+      rf_dir,
+      sprintf("rf_%s_9_ws_n9_prev2of9_%s.rds", marker, tr)
+    )
+    if (!file.exists(path)) {
+      stop("Missing RF RDS: ", path)
+    }
+    obj <- readRDS(path)
+    obj$result$importance %>%
+      dplyr::select(asv, mean_loo_importance) %>%
+      dplyr::mutate(transform = tr)
+  }))
+  sel <- long %>%
+    dplyr::filter(mean_loo_importance > imp_thresh) %>%
+    dplyr::count(asv, name = "n_pass") %>%
+    dplyr::filter(n_pass == length(transforms)) %>%
+    dplyr::pull(asv)
+  phy_path <- file.path(
+    rf_dir,
+    sprintf("rf_%s_9_ws_n9_prev2of9_clr_1.rds", marker)
+  )
+  phy <- readRDS(phy_path)$filter$phy
+  tt <- as.data.frame(as(phyloseq::tax_table(phy), "matrix"))
+  tt$asv <- rownames(tt)
+  labs <- tt %>%
+    dplyr::filter(asv %in% sel) %>%
+    dplyr::mutate(
+      GenusLabel = dplyr::case_when(
+        !is.na(Genus) & nzchar(as.character(Genus)) &
+          as.character(Genus) != "NA" ~ as.character(Genus),
+        !is.na(Family) & nzchar(as.character(Family)) &
+          as.character(Family) != "NA" ~ as.character(Family),
+        TRUE ~ substr(asv, 1L, 8L)
+      )
+    ) %>%
+    dplyr::pull(GenusLabel) %>%
+    unique()
+  sort(labs)
+}
+
+star_rf_overlap_labels <- function(labels, rf_genera) {
+  labels <- as.character(labels)
+  ifelse(labels %in% rf_genera, paste0(labels, "*"), labels)
+}
 
 # CLR transform for taxa-as-rows count/abundance matrix (samples as columns).
 # Pseudocount of 1, then compositional (proportions), then CLR:
@@ -93,6 +181,186 @@ ord_scores_df <- function(points, phy, axis_names = colnames(points)) {
     meta <- sample_data(phy) %>%
         as_tibble(rownames = "Sample")
     scores_df %>% left_join(meta, by = "Sample")
+}
+
+# Week-9 MS samples share Date = 9 with wall-strip week-9 (for full-dataset ordinations).
+ms_as_week9 <- function(phy) {
+    phy %>%
+        ps_mutate(Date = ifelse(as.character(Location) == "MS", 9, as.numeric(as.character(Date)))) %>%
+        ps_mutate(Date = factor(Date, levels = c(3, 6, 9)))
+}
+
+subset_week9_ws <- function(phy, label = "phy") {
+    keep <- as.character(sample_data(phy)$Location) == "WS" &
+        as.character(sample_data(phy)$Date) == "9"
+    n_keep <- sum(keep)
+    message(label, " week-9 WS: keeping ", n_keep, " / ", nsamples(phy), " samples")
+    if (n_keep < 3L) {
+        stop(label, ": fewer than 3 week-9 wall-strip samples")
+    }
+    phy <- prune_samples(keep, phy)
+    prune_taxa(taxa_sums(phy) > 0, phy)
+}
+
+# Genus Aitchison NMDS + PCoA from phyloseq (CLR pseudocount 1).
+aitchison_ordinations <- function(phy, nmds_seed = 123L, tax_level = "Genus") {
+    g <- genus_otu(phy, tax_level = tax_level)
+    d <- aitchison_dist(g$otu)
+    nmds <- nmds_from_dist(d, seed = nmds_seed)
+    pcoa <- pcoa_from_dist(d, k = 2L)
+    list(
+        dist = d,
+        phy = g$phy,
+        otu = g$otu,
+        nmds_scores = ord_scores_df(nmds$points, g$phy, c("NMDS1", "NMDS2")),
+        stress = nmds$stress,
+        pcoa_scores = ord_scores_df(pcoa$points, g$phy, c("PCoA1", "PCoA2")),
+        pcoa_var = pcoa$var_explained
+    )
+}
+
+# Native CLR-PCA loadings for overlay on Aitchison PCoA sites.
+# Rank by max(r2_PC1, r2_PC2) as in pca_plot0; keep top `n_top`
+# (threshold = max_r2 of the nth taxon). Sign-flip axes to match PCoA sites.
+pcoa_pca_loadings <- function(
+    otu,
+    pcoa_scores,
+    axis1 = "PCoA1",
+    axis2 = "PCoA2",
+    n_top = 10L,
+    r2_cutoff = NULL,
+    arrow_scale = 1
+) {
+    stopifnot(axis1 %in% names(pcoa_scores), axis2 %in% names(pcoa_scores),
+              "Sample" %in% names(pcoa_scores))
+    clr <- clr_transform(otu)
+    mod <- pca_from_otu(clr)
+    spp <- vegan::scores(mod, display = "species") %>%
+        as.data.frame() %>%
+        tibble::rownames_to_column("Taxon")
+    sites_pca <- vegan::scores(mod, display = "sites")
+    common <- intersect(as.character(pcoa_scores$Sample), rownames(sites_pca))
+    if (length(common) < 3L) {
+        stop("Fewer than 3 shared samples for PCA/PCoA overlay")
+    }
+    sites_pca <- sites_pca[common, c("PC1", "PC2"), drop = FALSE]
+    sites_pcoa <- as.matrix(
+        pcoa_scores[match(common, as.character(pcoa_scores$Sample)), c(axis1, axis2)]
+    )
+    rownames(sites_pcoa) <- common
+
+    flip1 <- if (stats::cor(sites_pca[, 1], sites_pcoa[, 1]) < 0) -1 else 1
+    flip2 <- if (stats::cor(sites_pca[, 2], sites_pcoa[, 2]) < 0) -1 else 1
+    sc1 <- stats::sd(sites_pcoa[, 1]) / stats::sd(sites_pca[, 1])
+    sc2 <- stats::sd(sites_pcoa[, 2]) / stats::sd(sites_pca[, 2])
+    if (!is.finite(sc1) || sc1 == 0) sc1 <- 1
+    if (!is.finite(sc2) || sc2 == 0) sc2 <- 1
+
+    tab <- spp %>%
+        dplyr::mutate(
+            r2_PCA1 = (PC1^2) / sum(PC1^2),
+            r2_PCA2 = (PC2^2) / sum(PC2^2),
+            max_r2 = pmax(r2_PCA1, r2_PCA2),
+            !!axis1 := PC1 * flip1 * sc1 * arrow_scale,
+            !!axis2 := PC2 * flip2 * sc2 * arrow_scale
+        ) %>%
+        dplyr::arrange(dplyr::desc(max_r2))
+
+    if (!is.null(r2_cutoff)) {
+        tab <- tab %>% dplyr::filter(max_r2 >= r2_cutoff)
+    } else {
+        tab <- tab %>% dplyr::slice_head(n = min(as.integer(n_top), nrow(tab)))
+    }
+
+    tab <- tab %>%
+        dplyr::select(
+            Taxon, !!axis1, !!axis2,
+            PC1, PC2, r2_PCA1, r2_PCA2, max_r2
+        )
+
+    attr(tab, "axis_flip") <- c(PC1 = flip1, PC2 = flip2)
+    attr(tab, "axis_scale") <- c(PC1 = sc1, PC2 = sc2)
+    attr(tab, "n_pca_taxa") <- nrow(spp)
+    attr(tab, "r2_threshold") <- if (nrow(tab)) min(tab$max_r2) else NA_real_
+    tab
+}
+
+# Point label: measured microplastic retention (particles/m²), 2 d.p.
+add_retention_label <- function(scores, col = "particles_total_d20", digits = 2L) {
+    scores %>%
+        dplyr::mutate(
+            retention_label = sprintf(
+                paste0("%.", digits, "f"),
+                as.numeric(.data[[col]])
+            )
+        )
+}
+
+# Main-text Fig 4: week-9 WS plastic panels (same as Fig S columns C/F).
+combine_plastic_w9_2panel <- function(
+    p_16s,
+    p_18s,
+    caption_16s = NULL,
+    caption_18s = NULL,
+    stress_16s = NULL,
+    stress_18s = NULL
+) {
+    no_cap <- function(p) p + labs(caption = NULL)
+
+    right_cap_cell <- function(plastic_txt, stress = NULL) {
+        has_pl <- !is.null(plastic_txt) && nzchar(as.character(plastic_txt))
+        has_st <- !is.null(stress) && is.finite(stress)
+        if (!has_pl && !has_st) {
+            return(patchwork::plot_spacer())
+        }
+        p <- ggplot() +
+            scale_x_continuous(limits = c(0, 1), expand = c(0, 0)) +
+            scale_y_continuous(limits = c(0, 1), expand = c(0, 0)) +
+            theme_void() +
+            theme(plot.margin = margin(2, 10, 6, 6))
+        if (has_pl) {
+            p <- p +
+                annotate(
+                    "text",
+                    x = 0.35,
+                    y = 0.5,
+                    label = stringr::str_wrap(as.character(plastic_txt), width = 40),
+                    size = 3.5,
+                    hjust = 0.5,
+                    vjust = 0.5,
+                    lineheight = 1.1
+                )
+        }
+        if (has_st) {
+            p <- p +
+                annotate(
+                    "text",
+                    x = 1,
+                    y = 0.5,
+                    label = glue("Stress = {round(stress, 3)}"),
+                    size = 3.5,
+                    hjust = 1,
+                    vjust = 0.5
+                )
+        }
+        p
+    }
+
+    (no_cap(p_16s) + no_cap(p_18s) +
+        right_cap_cell(caption_16s, stress_16s) +
+        right_cap_cell(caption_18s, stress_18s)) +
+        patchwork::plot_layout(
+            design = "AB\nCD",
+            heights = c(12, 1.5),
+            guides = "collect"
+        ) &
+        theme(
+            legend.position = "bottom",
+            legend.box = "horizontal",
+            legend.box.just = "center",
+            legend.direction = "horizontal",
+            legend.title.align = 0.5
+        )
 }
 
 # Point-only ordination plot styled like full-dataset PCA (Date / Location).
@@ -170,10 +438,10 @@ plot_ord_points <- function(
                 colour = taxa_colour,
                 fontface = "italic",
                 max.overlaps = 40,
-                min.segment.length = 0,
+                min.segment.length = Inf,
                 box.padding = 0.25,
                 point.padding = 0.15,
-                segment.colour = "grey60",
+                segment.colour = NA,
                 inherit.aes = FALSE
             )
     }

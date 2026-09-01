@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# ALDEx2 week-9 WS prev2of9 — plastic_level + MP retention.
-# Default: Genus. For ASV (RF-matched prev2of9): ALDEX_TAX_LEVEL=ASV bash scripts/run_aldex_week9.sh
+# ALDEx2 week-9 WS prev2of9 — genus primary (plastic_level KW + retention log10 Spearman).
+# ASV sensitivity: ALDEX_TAX_LEVEL=ASV bash scripts/run_aldex_week9.sh
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IMAGE="${ALDEX_DOCKER_IMAGE:-zjardyn/plastic-amplicon:latest}"
-MC_SAMPLES="${ALDEX_MC_SAMPLES:-128}"
+MC_SAMPLES="${ALDEX_MC_SAMPLES:-1000}"
+ALDEX_SEED="${ALDEX_SEED:-2026}"
+USE_MC="${ALDEX_USE_MC:-1}"
 DATASET="${ALDEX_DATASET:-both}"
 TAX_LEVEL="${ALDEX_TAX_LEVEL:-Genus}"
 MIN_READS="${ALDEX_MIN_READS:-3}"
 MIN_SAMPLES="${ALDEX_MIN_SAMPLES:-2}"
 OUT_DIR="${ALDEX_OUT_DIR:-output}"
+RUN_BINARY="${ALDEX_RUN_BINARY_HIGH2:-0}"
 
 if [[ "${TAX_LEVEL^^}" == "ASV" ]]; then
   FIG_DIR="${ALDEX_FIG_DIR:-figures/aldex_asv}"
@@ -25,18 +28,21 @@ docker_aldex() {
     -v "$ROOT:$ROOT" \
     -w "$ROOT" \
     -e "ALDEX_MC_SAMPLES=$MC_SAMPLES" \
+    -e "ALDEX_SEED=$ALDEX_SEED" \
+    -e "ALDEX_USE_MC=$USE_MC" \
     -e "ALDEX_DATASET=$DATASET" \
     -e "ALDEX_TAX_LEVEL=$TAX_LEVEL" \
     -e "ALDEX_MIN_READS=$MIN_READS" \
     -e "ALDEX_MIN_SAMPLES=$MIN_SAMPLES" \
     -e "ALDEX_OUT_DIR=$OUT_DIR" \
+    -e "ALDEX_RUN_BINARY_HIGH2=$RUN_BINARY" \
     -e "ALDEX_FIG_DIR=$FIG_DIR" \
     -e "ALDEX_GLM_FIG_DIR=$GLM_FIG_DIR" \
     "$IMAGE" \
     "$@"
 }
 
-echo "=== ALDEx2 week-9 WS | tax=$TAX_LEVEL | mc.samples=$MC_SAMPLES | filter=>=${MIN_READS} in >=${MIN_SAMPLES}/9 | dataset=$DATASET ==="
+echo "=== ALDEx2 week-9 WS | tax=$TAX_LEVEL | mc.samples=$MC_SAMPLES | seed=$ALDEX_SEED | useMC=$USE_MC | filter=>=${MIN_READS} in >=${MIN_SAMPLES}/9 | dataset=$DATASET | binary=$RUN_BINARY ==="
 docker_aldex Rscript R/15_aldex_week9_ws_prev2of9.R
 
 echo "=== ALDEx2 summary figures ($FIG_DIR) ==="

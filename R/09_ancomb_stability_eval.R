@@ -1,11 +1,21 @@
 source("R/functions.R")
+source("R/01_load_files2.R")
 
 # Enable markdown rendering globally
 theme_set(theme_minimal())
 
-# Read in the stability data
-stability_data_16S <- readRDS("output/ancombc_stability_16S_9_ws_trend.rds")
-stability_data_18S <- readRDS("output/ancombc_stability_18S_9_ws_trend.rds")
+# Week-9 WS prev2of9 trend stability (100 seeds) from R/12
+stability_data_16S <- readRDS("output/ancombc_trend_stability_16S_9_ws_prev2of9.rds")$results
+stability_data_18S <- readRDS("output/ancombc_trend_stability_18S_9_ws_prev2of9.rds")$results
+message("16S trend runs: ", length(stability_data_16S))
+message("18S trend runs: ", length(stability_data_18S))
+
+genus_map_16S <- genus_label_map_from_phy(phy_16S)
+genus_map_18S <- genus_label_map_from_phy(phy_18S)
+rf_gen_16S <- rf_all4_genus_labels("16S")
+rf_gen_18S <- rf_all4_genus_labels("18S")
+message("RF 4/4 genera for * mark: 16S=", length(rf_gen_16S),
+        " 18S=", length(rf_gen_18S))
 
 # Function to extract significant taxa from a single run
 extract_significant_taxa <- function(run_result) {
@@ -125,7 +135,10 @@ make_trend_heatmap_combined <- function(stats_16S, stats_18S, min_n_runs, outfil
         levels = c("low", "medium", "high"),
         labels = c("Low", "Medium", "High")
       ),
-      taxon_display = paste0(taxon, " (", n_runs, ")")
+      taxon_lab = label_ancombc_taxa(taxon, genus_map_16S),
+      taxon_display = paste0(
+        star_rf_overlap_labels(taxon_lab, rf_gen_16S), " (", n_runs, ")"
+      )
     )
 
   heatmap_data_18S <- bootstrap_stats_18S %>%
@@ -135,8 +148,21 @@ make_trend_heatmap_combined <- function(stats_16S, stats_18S, min_n_runs, outfil
         levels = c("low", "medium", "high"),
         labels = c("Low", "Medium", "High")
       ),
-      taxon_display = paste0(taxon, " (", n_runs, ")")
+      taxon_lab = label_ancombc_taxa(taxon, genus_map_18S),
+      taxon_display = paste0(
+        star_rf_overlap_labels(taxon_lab, rf_gen_18S), " (", n_runs, ")"
+      )
     )
+  message(
+    "RF* on trend heatmap: 16S=",
+    n_distinct(heatmap_data_16S$taxon_lab[
+      heatmap_data_16S$taxon_lab %in% rf_gen_16S
+    ]),
+    " 18S=",
+    n_distinct(heatmap_data_18S$taxon_lab[
+      heatmap_data_18S$taxon_lab %in% rf_gen_18S
+    ])
+  )
 
   make_one_panel <- function(heatmap_data, y_lab, tag) {
     if (nrow(heatmap_data) == 0L) {
@@ -240,7 +266,8 @@ make_trend_heatmap_combined <- function(stats_16S, stats_18S, min_n_runs, outfil
   pdf(
     outfile,
     width = 10 * 0.8,
-    height = 12 * 0.8,
+    height = max(12 * 0.8, 0.28 * (n_distinct(heatmap_data_16S$taxon) +
+      n_distinct(heatmap_data_18S$taxon) + 8)),
     family = "Helvetica",
     useDingbats = FALSE
   )
@@ -255,6 +282,22 @@ make_trend_heatmap_combined(
   bootstrap_stats_18S_all,
   min_n_runs = 20L,
   outfile = "figures/20pct_fig_5_trend_analysis_heatmap_stable_taxa_combined.pdf"
+)
+
+# Stability cut: n_runs >= 50 (50% of 100 boots; primary reproducibility bar)
+make_trend_heatmap_combined(
+  bootstrap_stats_16S_all,
+  bootstrap_stats_18S_all,
+  min_n_runs = 50L,
+  outfile = "figures/50pct_fig_5_trend_analysis_heatmap_stable_taxa_combined.pdf"
+)
+
+# All taxa ever trend-significant in any bootstrap (no stability cut)
+make_trend_heatmap_combined(
+  bootstrap_stats_16S_all,
+  bootstrap_stats_18S_all,
+  min_n_runs = 0L,
+  outfile = "figures/fig_5_trend_analysis_heatmap_all_taxa_combined.pdf"
 )
 ### Transposed heatmaps - taxa on x-axis, plastic level on y-axis
 # Reverse order for 16S transposed plot

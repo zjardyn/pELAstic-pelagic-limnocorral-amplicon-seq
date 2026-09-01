@@ -3,27 +3,38 @@
 # Load: R/01_load_files2.R (no full-table tax_filter)
 # Samples: Date == 9, Location == WS; keep all 9 (including WS_H_9)
 # Prevalence (primary): >=3 reads in >=2 of 9 samples (~22%)
-# Response: log1p(particles_total_d20)
+# Response: log10(particles_total_d20)
 # Features: ASVs (not genus-aggregated)
 #
 # Design:
-#   - Outer leave-one-out CV (n folds = n samples) for prediction error
-#   - Fixed RF params (mtry = floor(sqrt(p)), min.node.size = 5, ntree = 5000)
-#   - Primary metrics: LOO RMSE / MAE / R² (regression)
-#   - Importance: ranger permutation from full n fit (primary);
-#     LOO-fold importance summarized as secondary (sd / topk_freq)
-#   - Transform grid measures zero-handling sensitivity
+#   - Leave-one-out CV (9 folds): train on 8, predict held-out sample
+#   - Fixed RF params (mtry = floor(sqrt(p)), min.node.size = 5;
+#     ntree from RF_NUM_TREES, default 5000)
+#   - No final model on all n — exploratory LOOCV only
+#   - Primary importance: permutation importance within each LOO training fold,
+#     summarized per ASV by median, IQR, and top-20 frequency across folds
+#   - Prediction: LOO RMSE/MAE/R² vs mean-only LOO baseline
 #
 # Transform grid:
-#   clr_0.1, clr_0.5, clr_1  — vegan CLR with QUBS-matched pseudocounts
+#   clr_1, clr_0.5, clr_0.1, clr_0.01 — vegan CLR with fixed pseudocounts
 #   rclr                     — vegan rCLR without matrix completion (impute=FALSE)
 #   rclr_optspace            — vegan rCLR with optspace completion (impute=TRUE)
+#   gbm, czm                 — zCompositions::cmultRepl (GBM|CZM) then vegan CLR
+#                            (no extra pseudocount; z.warning=1, z.delete=FALSE
+#                             so prevalence-filtered taxa are not auto-dropped)
+#   pa                       — presence/absence (1 if count > 0, else 0)
 #
-# Per transform: full-fit importance; LOO error metrics; topk_freq across LOO folds
-# Across transforms: n_transforms_in_topk (not only strict intersection)
+# Per transform: LOO metrics + fold-wise permutation importance (median rank)
+# Across transforms: n_transforms_in_topk by median LOO importance
 #
 # Server:
-#   RF_N_CL=40 RF_DATASET=both Rscript R/14_random_forests_week9_ws_prev2of9.R
+#   RF_N_CL=40 RF_DATASET=both RF_NUM_TREES=10000 Rscript R/14_random_forests_week9_ws_prev2of9.R
+# Seeds (LOO fold i uses RF_LOO_SEED_BASE + i):
+#   RF_LOO_SEED_BASE=424242 Rscript R/14_...
+# Separate RDS output dir:
+#   RF_OUT_DIR=output/rf_loocv_importance_all Rscript R/14_...
+# Subset transforms (comma-separated; default = full grid):
+#   RF_TRANSFORMS=clr_1,clr_0.1,clr_0.01,czm,pa RF_NUM_TREES=10000 Rscript R/14_...
 
 suppressPackageStartupMessages({
   library(phyloseq)
@@ -44,6 +55,8 @@ dataset <- toupper(Sys.getenv("RF_DATASET", unset = "both")) # 16S | 18S | both
 min_reads <- as.integer(Sys.getenv("RF_MIN_READS", unset = "3"))
 min_samples <- as.integer(Sys.getenv("RF_MIN_SAMPLES", unset = "2"))
 top_k <- as.integer(Sys.getenv("RF_TOP_K", unset = "20"))
+loo_seed_base <- as.integer(Sys.getenv("RF_LOO_SEED_BASE", unset = "200000"))
+full_seed <- as.integer(Sys.getenv("RF_FULL_SEED", unset = "300000"))
 out_dir <- Sys.getenv("RF_OUT_DIR", unset = "output")
 drop_samples <- strsplit(
   Sys.getenv("RF_DROP_SAMPLES", unset = ""),
@@ -59,11 +72,39 @@ dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
 drop_label <- if (length(drop_samples)) paste(drop_samples, collapse = ",") else "none"
 
+TRANSFORM_IDS_DEFAULT <- c(
+  "clr_1", "clr_0.5", "clr_0.1", "clr_0.01",
+  "rclr", "rclr_optspace",
+  "gbm", "czm",
+  "pa"
+)
+rf_transforms_env <- Sys.getenv("RF_TRANSFORMS", unset = "")
+if (nzchar(rf_transforms_env)) {
+  TRANSFORM_IDS <- strsplit(rf_transforms_env, ",", fixed = TRUE)[[1]] |>
+    trimws()
+  TRANSFORM_IDS <- TRANSFORM_IDS[nzchar(TRANSFORM_IDS)]
+  if (!length(TRANSFORM_IDS)) {
+    stop("RF_TRANSFORMS is set but empty after parsing")
+  }
+  bad <- setdiff(TRANSFORM_IDS, TRANSFORM_IDS_DEFAULT)
+  if (length(bad)) {
+    stop(
+      "Unknown transform(s) in RF_TRANSFORMS: ",
+      paste(bad, collapse = ", "),
+      " | allowed: ",
+      paste(TRANSFORM_IDS_DEFAULT, collapse = ", ")
+    )
+  }
+} else {
+  TRANSFORM_IDS <- TRANSFORM_IDS_DEFAULT
+}
+
 message(sprintf(
-  "RF week-9 WS | cores=%d | trees=%d | dataset=%s | filter=>=%d reads in >=%d samples | drop=%s | top_k=%d | outer=LOOCV",
+  "RF week-9 WS | cores=%d | trees=%d | dataset=%s | filter=>=%d reads in >=%d samples | drop=%s | top_k=%d | outer=LOOCV only | loo_seed_base=%d",
   num_cores, num_trees, dataset, min_reads, min_samples,
-  drop_label, top_k
+  drop_label, top_k, loo_seed_base
 ))
+message("Transforms: ", paste(TRANSFORM_IDS, collapse = ", "))
 
 # --- prep ---
 subset_week9_ws_rf <- function(phy, drop = drop_samples) {
@@ -115,6 +156,7 @@ counts_samples_by_taxa <- function(phy) {
 }
 
 # Transforms: return samples x taxa matrix (finite columns only)
+# X is samples x taxa counts (see counts_samples_by_taxa).
 transform_counts <- function(X, transform) {
   transform <- as.character(transform)
   if (startsWith(transform, "clr_")) {
@@ -132,6 +174,29 @@ transform_counts <- function(X, transform) {
   } else if (identical(transform, "rclr_optspace")) {
     # vegan 2.7+ optspace matrix completion (DEICODE-style; default impute=TRUE)
     Z <- vegan::decostand(X, method = "rclr", MARGIN = 1L, impute = TRUE)
+  } else if (transform %in% c("gbm", "czm")) {
+    if (!requireNamespace("zCompositions", quietly = TRUE)) {
+      stop("Package zCompositions is required for transform '", transform, "'")
+    }
+    method <- if (identical(transform, "gbm")) "GBM" else "CZM"
+    # Keep all prevalence-filtered taxa: do not auto-drop high-zero cols/rows.
+    # z.warning=1 means zero-fraction never exceeds the threshold.
+    X_imp <- zCompositions::cmultRepl(
+      X,
+      label = 0,
+      method = method,
+      output = "p-counts",
+      z.warning = 1,
+      z.delete = FALSE,
+      suppress.print = TRUE
+    )
+    X_imp <- as.matrix(X_imp)
+    storage.mode(X_imp) <- "double"
+    # CLR on imputed counts; no extra vegan pseudocount
+    Z <- vegan::decostand(X_imp, method = "clr", MARGIN = 1L)
+  } else if (identical(transform, "pa")) {
+    # Presence/absence: 1 if count > 0, else 0 (vegan "pa")
+    Z <- vegan::decostand(X, method = "pa", MARGIN = 1L)
   } else {
     stop("Unknown transform: ", transform)
   }
@@ -173,8 +238,6 @@ drop_near_zero_var <- function(X, freq_cut = 95 / 5, unique_cut = 10) {
   X[, !drop, drop = FALSE]
 }
 
-TRANSFORM_IDS <- c("clr_0.1", "clr_0.5", "clr_1", "rclr", "rclr_optspace")
-
 loo_regression_metrics <- function(y_obs, y_pred) {
   err <- as.numeric(y_obs) - as.numeric(y_pred)
   ss_res <- sum(err^2, na.rm = TRUE)
@@ -206,7 +269,7 @@ rf_importance_one <- function(
   # Use $ / drop=FALSE — samp_df[i, "col"] can be a 1-col list/data.frame
   # (phyloseq sample_data), and as.numeric() then errors with list coercion.
   samp_df <- as(phyloseq::sample_data(phy), "data.frame")
-  Y <- log1p(as.numeric(samp_df[rownames(X), , drop = FALSE]$particles_total_d20))
+  Y <- log10(as.numeric(samp_df[rownames(X), , drop = FALSE]$particles_total_d20))
   names(Y) <- rownames(X)
   if (any(!is.finite(Y))) {
     stop("Non-finite response values for transform ", transform)
@@ -238,7 +301,7 @@ rf_importance_one <- function(
     X_test <- X[i, , drop = FALSE]
 
     dat_train <- data.frame(y = Y_train, X_train, check.names = FALSE)
-    set.seed(200000L + i)
+    set.seed(loo_seed_base + i)
     fit_loo <- ranger::ranger(
       dependent.variable.name = "y",
       data = dat_train,
@@ -249,7 +312,7 @@ rf_importance_one <- function(
       replace = TRUE,
       sample.fraction = 1,
       num.threads = num_cores,
-      seed = 200000L + i,
+      seed = loo_seed_base + i,
       verbose = FALSE
     )
 
@@ -282,6 +345,7 @@ rf_importance_one <- function(
   loo_imp_agg <- loo_imp_df %>%
     dplyr::group_by(asv) %>%
     dplyr::summarise(
+      median_loo_importance = stats::median(Overall, na.rm = TRUE),
       mean_loo_importance = mean(Overall, na.rm = TRUE),
       sd_importance = stats::sd(Overall, na.rm = TRUE),
       iqr_importance = stats::IQR(Overall, na.rm = TRUE),
@@ -289,30 +353,10 @@ rf_importance_one <- function(
       .groups = "drop"
     )
 
-  # --- Full n fit: primary importance ---
-  if (isTRUE(verbose)) {
-    message(sprintf("  full-n fit (n=%d) for importance", n))
-  }
-  dat_full <- data.frame(y = Y, X, check.names = FALSE)
-  set.seed(300000L)
-  fit_full <- ranger::ranger(
-    dependent.variable.name = "y",
-    data = dat_full,
-    num.trees = num_trees,
-    mtry = mtry,
-    min.node.size = min_node_size,
-    importance = "permutation",
-    replace = TRUE,
-    sample.fraction = 1,
-    num.threads = num_cores,
-    seed = 300000L,
-    verbose = FALSE
-  )
-  vi_full <- fit_full$variable.importance
-  full_imp <- tibble::tibble(
-    asv = names(vi_full),
-    mean_importance = as.numeric(vi_full)
-  )
+  baseline_pred <- vapply(seq_len(n), function(i) {
+    mean(Y[setdiff(seq_len(n), i)])
+  }, numeric(1))
+  baseline_metrics <- loo_regression_metrics(Y, baseline_pred)
 
   tax <- as.data.frame(phyloseq::tax_table(phy)) %>%
     tibble::rownames_to_column("asv")
@@ -322,9 +366,8 @@ rf_importance_one <- function(
 
   out <- tax %>%
     dplyr::select(asv, Genus) %>%
-    dplyr::inner_join(full_imp, by = "asv") %>%
     dplyr::left_join(loo_imp_agg, by = "asv") %>%
-    dplyr::arrange(dplyr::desc(mean_importance))
+    dplyr::arrange(dplyr::desc(median_loo_importance))
 
   list(
     transform = transform,
@@ -335,19 +378,25 @@ rf_importance_one <- function(
     n_loo_folds = n,
     importance = out,
     loo_predictions = pred_df,
-    loo_metrics = loo_metrics,
-    loo_importance_level = loo_imp_df,
-    full_fit_oob = tibble::tibble(
-      oob_mse = fit_full$prediction.error,
-      oob_r2 = fit_full$r.squared
-    )
+    loo_metrics = dplyr::bind_cols(loo_metrics, tibble::tibble(
+      baseline_rmse = baseline_metrics$rmse,
+      baseline_mae = baseline_metrics$mae,
+      baseline_r2 = baseline_metrics$r2
+    )),
+    loo_importance_level = loo_imp_df
   )
 }
 
-# Count how many transforms place each ASV in the top-K (by full-n importance)
+# Count how many transforms place each ASV in the top-K (by median LOO importance)
 transform_topk_membership <- function(result_list, top_k = 20L) {
   sets <- lapply(result_list, function(res) {
-    head(res$importance$asv, top_k)
+    imp <- res$importance
+    if ("median_loo_importance" %in% names(imp)) {
+      imp <- dplyr::arrange(imp, dplyr::desc(median_loo_importance))
+    } else if ("mean_importance" %in% names(imp)) {
+      imp <- dplyr::arrange(imp, dplyr::desc(mean_importance))
+    }
+    head(imp$asv, top_k)
   })
   names(sets) <- vapply(result_list, `[[`, character(1), "transform")
   all_asvs <- unique(unlist(sets, use.names = FALSE))
@@ -421,9 +470,11 @@ run_marker <- function(phy, label) {
           n_loo_folds = res$n_loo_folds,
           num_trees = num_trees,
           mtry = res$mtry,
-          importance = "ranger_permutation_full_n",
-          importance_secondary = "ranger_permutation_across_LOO_folds",
-          primary_metrics = c("loo_rmse", "loo_mae", "loo_r2")
+          loo_seed_base = loo_seed_base,
+          importance = "ranger_permutation_median_across_LOO_folds",
+          baseline = "mean_training_set_per_LOO_fold",
+          primary_metrics = c("loo_rmse", "loo_mae", "loo_r2", "baseline_rmse"),
+          ranking = "median_loo_importance"
         ),
         result = res
       ),
@@ -431,18 +482,34 @@ run_marker <- function(phy, label) {
     )
     message("Wrote ", normalizePath(path_i, winslash = "/", mustWork = FALSE))
     message(sprintf(
-      "  LOO metrics: RMSE=%.4f | MAE=%.4f | R2=%.3f",
-      res$loo_metrics$rmse, res$loo_metrics$mae, res$loo_metrics$r2
+      "  LOO metrics: RMSE=%.4f (baseline=%.4f) | MAE=%.4f | R2=%.3f",
+      res$loo_metrics$rmse, res$loo_metrics$baseline_rmse,
+      res$loo_metrics$mae, res$loo_metrics$r2
     ))
   }
 
   sens <- transform_topk_membership(results, top_k = top_k)
-  ref <- results[["clr_1"]]$importance
+  ref_tr <- if ("clr_1" %in% names(results)) {
+    "clr_1"
+  } else {
+    names(results)[[1]]
+  }
+  ref <- results[[ref_tr]]$importance %>%
+    dplyr::select(
+      asv,
+      dplyr::any_of(c(
+        "median_loo_importance", "mean_loo_importance",
+        "sd_importance", "iqr_importance", "topk_freq",
+        "Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species"
+      ))
+    )
+  # Avoid clashing with membership columns; keep taxonomy + ranking importance from ref.
   memb_tbl <- sens$membership %>%
-    dplyr::left_join(ref, by = "asv") %>%
+    dplyr::left_join(ref, by = "asv", suffix = c("", "_ref")) %>%
     dplyr::arrange(
       dplyr::desc(n_transforms_in_topk),
-      dplyr::desc(mean_importance)
+      dplyr::desc(dplyr::coalesce(median_loo_importance, 0)),
+      asv
     )
 
   summary_path <- file.path(out_dir, sprintf("rf_%s_transform_topk%d_membership.rds", tag, top_k))
@@ -468,10 +535,10 @@ run_marker <- function(phy, label) {
   message("Wrote ", normalizePath(summary_path, winslash = "/", mustWork = FALSE))
   print(
     memb_tbl %>%
-      dplyr::select(
-        asv, Genus, n_transforms_in_topk, mean_importance,
-        sd_importance, topk_freq, transforms_in_topk
-      ),
+      dplyr::select(dplyr::any_of(c(
+        "asv", "Genus", "n_transforms_in_topk", "median_loo_importance",
+        "mean_loo_importance", "iqr_importance", "topk_freq", "transforms_in_topk"
+      ))),
     n = 50
   )
 
